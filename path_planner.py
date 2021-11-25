@@ -6,16 +6,37 @@ from road import Road
 from vehicle_state import VehicleState
 from point2d import PointNT, Point2DArray
 
+def max0(x):
+	return max(x, 0)
+
 
 class PathPlanner:
-	def __init__(self, road: Road):
+	def __init__(self, road: Road, ref_vel, kt, kd, kv, dmax, vmax, amax, kmax, alpha=0.01, beta=0.01):
 		self.road = road
+
+		self.ref_vel = ref_vel
+		self.kt = kt
+		self.kd = kd
+		self.kv = kv
+
+		self.dmax = dmax
+		self.vmax = vmax
+		self.amax = amax
+		self.kmax = kmax
+
+		self.alpha = alpha
+		self.beta = beta
+		self.mu = np.zeros((5,1))
 	
-	def get_optimal_path(self, current_state: VehicleState, final_time: float, final_lat_pos: float, final_long_vel: float):
+	def set_current_state(self, current_state: VehicleState):
 		self.current_state = current_state
+
+	def generate_path(self, x: np.ndarray):
+		final_time, final_lat_pos, final_long_vel = x
 		self.final_time = final_time
 		self.final_lat_pos = final_lat_pos
 		self.final_long_vel = final_long_vel
+
 		self._calc_lat_poly_coef()
 		self._calc_long_poly_coef()
 
@@ -69,29 +90,29 @@ class PathPlanner:
 		])
 
 	def get_lat_long_pos(self, t):
-		pn = np.dot(self.lat_poly_coef, np.array([1, t, t**2, t**3, t**4, t**5]))
-		pt = np.dot(self.long_poly_coef, np.array([1, t, t**2, t**3, t**4]))
+		pn = np.dot(self.lat_poly_coef, t**np.arange(6))
+		pt = np.dot(self.long_poly_coef, t**np.arange(5))
 		return PointNT(pn, pt)
 	
 	def get_lat_long_vel(self, t):
 		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
 		at0, at1, at2, at3, at4 = self.long_poly_coef
-		vn = np.dot(np.array([an1, 2*an2, 3*an3, 4*an4, 5*an5]), np.array([1, t, t**2, t**3, t**4]))
-		vt = np.dot(np.array([at1, 2*at2, 3*at3, 4*at4]), np.array([1, t, t**2, t**3]))
+		vn = np.dot(np.array([an1, 2*an2, 3*an3, 4*an4, 5*an5]), t**np.arange(5))
+		vt = np.dot(np.array([at1, 2*at2, 3*at3, 4*at4]), t**np.arange(4))
 		return PointNT(vn, vt)
 	
 	def get_lat_long_acc(self, t):
 		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
 		at0, at1, at2, at3, at4 = self.long_poly_coef
-		an = np.dot(np.array([2*an2, 6*an3, 12*an4, 20*an5]), np.array([1, t, t**2, t**3]))
-		at = np.dot(np.array([2*at2, 6*at3, 12*at4]), np.array([1, t, t**2]))
+		an = np.dot(np.array([2*an2, 6*an3, 12*an4, 20*an5]), t**np.arange(4))
+		at = np.dot(np.array([2*at2, 6*at3, 12*at4]), t**np.arange(3))
 		return PointNT(an, at)
 	
 	def get_lat_long_jrk(self, t):
 		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
 		at0, at1, at2, at3, at4 = self.long_poly_coef
-		jn = np.dot(np.array([6*an3, 24*an4, 60*an5]), np.array([1, t, t**2]))
-		jt = np.dot(np.array([6*at3, 24*at4]), np.array([1, t]))
+		jn = np.dot(np.array([6*an3, 24*an4, 60*an5]), t**np.arange(3))
+		jt = np.dot(np.array([6*at3, 24*at4]), t**np.arange(2))
 		return PointNT(jn, jt)
 	
 	def get_curvature(self, t):
@@ -121,16 +142,18 @@ class PathPlanner:
 		J3 = pen**2
 		return J3
 	
-	def get_object_function_final_long_vel(self, ref_vel):
+	def get_object_function_final_long_vel(self):
 		vet = self.final_long_vel
-		J4 = (vet - ref_vel)**2
+		J4 = (vet - self.ref_vel)**2
 		return J4
 	
-	def get_object_function(self, ref_vel, kt, kd, kv):
+	def get_object_function(self, x):
+		self.generate_path(x)
+
 		J1 = self.get_object_function_jerk()
 		J2 = self.get_object_function_time()
 		J3 = self.get_object_function_final_lat_pos()
-		J4 = self.get_object_function_final_long_vel(ref_vel)
+		J4 = self.get_object_function_final_long_vel()
 
 		J = J1 + kt*J2 + kd*J3 + kv*J4
 
@@ -239,28 +262,197 @@ class PathPlanner:
 		J3_x = np.array([0, 2*pen, 0])
 		return J3_x
 	
-	def get_object_function_final_long_vel_gradient(self, ref_vel):
+	def get_object_function_final_long_vel_gradient(self):
 		vet = self.final_long_vel
-		J4_x = np.array([0, 0, 2*(vet - ref_vel)])
+		J4_x = np.array([0, 0, 2*(vet - self.ref_vel)])
 		return J4_x
 	
-	def get_object_function_gradient(self, ref_vel, kt, kd, kv):
+	def get_object_function_gradient(self):
 		J1_x = self.get_object_function_jerk_gradient()
 		J2_x = self.get_object_function_time_gradient()
 		J3_x = self.get_object_function_final_lat_pos_gradient()
-		J4_x = self.get_object_function_final_long_vel_gradient(ref_vel)
+		J4_x = self.get_object_function_final_long_vel_gradient()
 
 		J_x = J1_x + kt*J2_x + kd*J3_x + kv*J4_x
 
 		return J_x
 	
+	def get_object_function_gradient_numeric(self):
+		dT   = 0.0001
+		dpen = 0.0001
+		dvet = 0.0001
 
-	def get_constraint_function_values(self, t):
-		pass
+		J1u = planner.get_object_function(np.array([T + dT, pen, vet]))
+		J1d = planner.get_object_function(np.array([T - dT, pen, vet]))
+		J2u = planner.get_object_function(np.array([T, pen + dpen, vet]))
+		J2d = planner.get_object_function(np.array([T, pen - dpen, vet]))
+		J3u = planner.get_object_function(np.array([T, pen, vet + dvet]))
+		J3d = planner.get_object_function(np.array([T, pen, vet - dvet]))
+		
+		dJ_numeric = np.array([(J1u-J1d)/dT/2, (J2u-J2d)/dpen/2, (J3u-J3d)/dvet/2])
 
-	def get_constraint_function_jacobian(self, t):
-		pass
+		return dJ_numeric
 
+	def get_constraint_function_1(self, t):
+		pt = self.get_lat_long_pos(t)
+		pnt = pt.n
+		g1 = pnt - self.dmax
+		return g1
+		
+	def get_constraint_function_2(self, t):
+		pt = self.get_lat_long_pos(t)
+		pnt = pt.n
+		g2 = -pnt - self.dmax
+		return g2
+		
+	def get_constraint_function_3(self, t):
+		vt = self.get_lat_long_vel(t)
+		vt2 = vt.norm**2
+		g3 = vt2 - self.vmax**2
+		return g3
+		
+	def get_constraint_function_4(self, t):
+		at = self.get_lat_long_acc(t)
+		at2 = at.norm**2
+		g4 = at2 - self.amax**2
+		return g4
+		
+	def get_constraint_function_5(self, t):
+		kt = self.get_curvature(t)
+		kt2 = kt**2
+		g5 = kt2 - self.kmax**2
+		return g5
+	
+	def get_constraint_function_max_1(self, x):
+		self.generate_path(x)
+
+		max_value = -np.inf
+		for t in np.linspace(0, self.final_time, 10):
+			value = self.get_constraint_function_1(t)
+			max_value = max(value, max_value)
+		return max_value
+		
+	def get_constraint_function_max_2(self, x):
+		self.generate_path(x)
+
+		max_value = -np.inf
+		for t in np.linspace(0, self.final_time, 10):
+			value = self.get_constraint_function_2(t)
+			max_value = max(value, max_value)
+		return max_value
+		
+	def get_constraint_function_max_3(self, x):
+		self.generate_path(x)
+
+		max_value = -np.inf
+		for t in np.linspace(0, self.final_time, 10):
+			value = self.get_constraint_function_3(t)
+			max_value = max(value, max_value)
+		return max_value
+		
+	def get_constraint_function_max_4(self, x):
+		self.generate_path(x)
+
+		max_value = -np.inf
+		for t in np.linspace(0, self.final_time, 10):
+			value = self.get_constraint_function_4(t)
+			max_value = max(value, max_value)
+		return max_value
+		
+	def get_constraint_function_max_5(self, x):
+		self.generate_path(x)
+
+		max_value = -np.inf
+		for t in np.linspace(0, self.final_time, 10):
+			value = self.get_constraint_function_5(t)
+			max_value = max(value, max_value)
+		return max_value
+	
+	def get_constraint_function_max(self, x):
+		g_max = np.array([
+			self.get_constraint_function_max_1(x),
+			self.get_constraint_function_max_2(x),
+			self.get_constraint_function_max_3(x),
+			self.get_constraint_function_max_4(x),
+			self.get_constraint_function_max_5(x),
+		])
+		return g_max
+		
+
+	def get_constraint_function_jacobian(self):
+		T = self.final_time
+		pen = self.final_lat_pos
+		vet = self.final_long_vel
+
+		dT   = 0.0001
+		dpen = 0.0001
+		dvet = 0.0001
+
+		# g11u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
+		# g11d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
+		# g12u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
+		# g12d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
+		# g13u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
+		# g13d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
+		# dg1 = np.array([(g11u-g11d)/dT/2, (g12u-g12d)/dpen/2, (g13u-g13d)/dvet/2])
+
+		# g21u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
+		# g21d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
+		# g22u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
+		# g22d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
+		# g23u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
+		# g23d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
+		# dg2 = np.array([(g21u-g21d)/dT/2, (g22u-g22d)/dpen/2, (g23u-g23d)/dvet/2])
+
+		# g31u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
+		# g31d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
+		# g32u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
+		# g32d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
+		# g33u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
+		# g33d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
+		# dg3 = np.array([(g31u-g31d)/dT/2, (g32u-g32d)/dpen/2, (g33u-g33d)/dvet/2])
+
+		# g41u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
+		# g41d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
+		# g42u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
+		# g42d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
+		# g43u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
+		# g43d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
+		# dg4 = np.array([(g41u-g41d)/dT/2, (g42u-g42d)/dpen/2, (g43u-g43d)/dvet/2])
+
+		# g51u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
+		# g51d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
+		# g52u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
+		# g52d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
+		# g53u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
+		# g53d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
+		# dg5 = np.array([(g51u-g51d)/dT/2, (g52u-g52d)/dpen/2, (g53u-g53d)/dvet/2])
+
+		# dg = np.vstack([dg1, dg2, dg3, dg4, dg5])
+
+		
+		g1u = self.get_constraint_function_max(np.array([T + dT, pen, vet]))
+		g1d = self.get_constraint_function_max(np.array([T - dT, pen, vet]))
+		g2u = self.get_constraint_function_max(np.array([T, pen + dpen, vet]))
+		g2d = self.get_constraint_function_max(np.array([T, pen - dpen, vet]))
+		g3u = self.get_constraint_function_max(np.array([T, pen, vet + dvet]))
+		g3d = self.get_constraint_function_max(np.array([T, pen, vet - dvet]))
+		dg = np.array([(g1u-g1d)/dT/2, (g2u-g2d)/dpen/2, (g3u-g3d)/dvet/2]).transpose()
+
+		return dg
+
+	def lagrangian(self):
+		mu = np.zeros((5,1))
+		x = np.array([4, 0, self.ref_vel])
+
+		for i in range(20):
+			df = self.get_object_function_gradient_numeric()
+			dg = self.get_constraint_function_jacobian()
+
+			x -= self.alpha*(df + (dg.transpose() @ mu).squeeze(1))
+			mu = np.expand_dims(np.array(list(map(max0, mu.squeeze(1) + self.beta*g))), 1)
+		
+		return x
 
 if __name__ == '__main__':
 	kph = 1/3.6
@@ -277,50 +469,50 @@ if __name__ == '__main__':
 	kd = 1
 	kv = 1
 
-	planner = PathPlanner(road)
+	dmax = 1
+	vmax = 30*kph
+	amax = 9.81
+	kmax = 10
+
+	planner = PathPlanner(road, vref, kt, kd, kv, dmax, vmax, amax, kmax)
 	current_state = VehicleState()
 
 	T = 30
 	pen = 5
 	vet = 27*kph
+	x = np.array([T, pen, vet])
 
-	planner.get_optimal_path(current_state=current_state, final_time=T, final_lat_pos=pen, final_long_vel=vet)
+	planner.set_current_state(current_state)
+	planner.generate_path(x)
 
 	J1 = planner.get_object_function_jerk()
 	J2 = planner.get_object_function_time()
 	J3 = planner.get_object_function_final_lat_pos()
-	J4 = planner.get_object_function_final_long_vel(vref)
-	J = planner.get_object_function(vref, kt, kd, kv)
+	J4 = planner.get_object_function_final_long_vel()
+	J = planner.get_object_function(x)
 
 	print(f'{J=:6.4f} {J1=:6.4f} {J2=:6.4f} {J3=:6.4f} {J4=:6.4f}')
 
 	# analytic differentiation
-	dJ = planner.get_object_function_gradient(vref, kt, kd, kv)
+	dJ = planner.get_object_function_gradient()
 	dJ_str = ' '.join([str(s).rjust(5) for s in np.round(dJ, 3)])
 	print(f'{dJ_str}')
 
-	# numerical differentiation
-	dT   =   T*0.0001
-	dpen = pen*0.0001
-	dvet = vet*0.0001
-
-	planner.get_optimal_path(current_state=current_state, final_time=T+dT, final_lat_pos=pen, final_long_vel=vet)
-	J1u = planner.get_object_function(vref, kt, kd, kv)
-	planner.get_optimal_path(current_state=current_state, final_time=T-dT, final_lat_pos=pen, final_long_vel=vet)
-	J1d = planner.get_object_function(vref, kt, kd, kv)
-	planner.get_optimal_path(current_state=current_state, final_time=T, final_lat_pos=pen+dpen, final_long_vel=vet)
-	J2u = planner.get_object_function(vref, kt, kd, kv)
-	planner.get_optimal_path(current_state=current_state, final_time=T, final_lat_pos=pen-dpen, final_long_vel=vet)
-	J2d = planner.get_object_function(vref, kt, kd, kv)
-	planner.get_optimal_path(current_state=current_state, final_time=T, final_lat_pos=pen, final_long_vel=vet+dvet)
-	J3u = planner.get_object_function(vref, kt, kd, kv)
-	planner.get_optimal_path(current_state=current_state, final_time=T, final_lat_pos=pen, final_long_vel=vet-dvet)
-	J3d = planner.get_object_function(vref, kt, kd, kv)
-	
-	dJ_numeric = np.array([(J1u-J1d)/dT/2, (J2u-J2d)/dpen/2, (J3u-J3d)/dvet/2])
+	dJ_numeric = planner.get_object_function_gradient_numeric()
 	dJ_numeric_str = ' '.join([str(s).rjust(5) for s in np.round(dJ_numeric, 3)])
 	print(f'{dJ_numeric_str}')
 
+	g = planner.get_constraint_function_max(x)
+	print(g)
+
+	dg = planner.get_constraint_function_jacobian()
+	print(dg)
+
+	xopt = planner.lagrangian()
+	print(xopt)
+
+	planner.generate_path(xopt)
+	T = xopt[0]
 
 	# draw path
 	ts = np.linspace(0, T, 10)
