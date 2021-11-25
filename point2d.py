@@ -17,6 +17,10 @@ class PointNT:
 		return self._array[1]
 	
 	@property
+	def norm(self):
+		return np.hypot(self.n, self.t)
+	
+	@property
 	def normalized(self):
 		l = np.hypot(self.n, self.t)
 		return PointNT(self.n/l, self.t/l)
