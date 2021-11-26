@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from numpy.core.einsumfunc import _parse_possible_contraction
 from road import Road
 from vehicle_state import VehicleState
-from point2d import PointNT, Point2DArray
+from vector import Vector2D
 from JSOPT.lagrangian import lagrangian
 
 def max0(x):
@@ -47,9 +47,9 @@ class PathPlanner:
 		"""
 		T = self.final_time
 
-		pns = self.current_state.pos.n
-		vns = self.current_state.vel.n
-		ans = self.current_state.acc.n
+		pns = self.current_state.pos.y
+		vns = self.current_state.vel.y
+		ans = self.current_state.acc.y
 		pne = self.final_lat_pos
 		vne = 0.
 		ane = 0.
@@ -73,9 +73,9 @@ class PathPlanner:
 		"""
 		T = self.final_time
 
-		pts = self.current_state.pos.t
-		vts = self.current_state.vel.t
-		ats = self.current_state.acc.t
+		pts = self.current_state.pos.x
+		vts = self.current_state.vel.x
+		ats = self.current_state.acc.x
 		vte = self.final_long_vel
 		ate = 0.
 
@@ -93,33 +93,33 @@ class PathPlanner:
 	def get_lat_long_pos(self, t):
 		pn = np.dot(self.lat_poly_coef, t**np.arange(6))
 		pt = np.dot(self.long_poly_coef, t**np.arange(5))
-		return PointNT(pn, pt)
+		return Vector2D(pn, pt)
 	
 	def get_lat_long_vel(self, t):
 		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
 		at0, at1, at2, at3, at4 = self.long_poly_coef
 		vn = np.dot(np.array([an1, 2*an2, 3*an3, 4*an4, 5*an5]), t**np.arange(5))
 		vt = np.dot(np.array([at1, 2*at2, 3*at3, 4*at4]), t**np.arange(4))
-		return PointNT(vn, vt)
+		return Vector2D(vn, vt)
 	
 	def get_lat_long_acc(self, t):
 		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
 		at0, at1, at2, at3, at4 = self.long_poly_coef
 		an = np.dot(np.array([2*an2, 6*an3, 12*an4, 20*an5]), t**np.arange(4))
 		at = np.dot(np.array([2*at2, 6*at3, 12*at4]), t**np.arange(3))
-		return PointNT(an, at)
+		return Vector2D(an, at)
 	
 	def get_lat_long_jrk(self, t):
 		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
 		at0, at1, at2, at3, at4 = self.long_poly_coef
 		jn = np.dot(np.array([6*an3, 24*an4, 60*an5]), t**np.arange(3))
 		jt = np.dot(np.array([6*at3, 24*at4]), t**np.arange(2))
-		return PointNT(jn, jt)
+		return Vector2D(jn, jt)
 	
 	def get_curvature(self, t):
 		vel = self.get_lat_long_vel(t)
 		acc = self.get_lat_long_acc(t)
-		kappa = (vel.t * acc.n - vel.n * acc.t) / (vel.n**2 + vel.t**2)**(3/2)
+		kappa = (vel.x * acc.y - vel.y * acc.x) / (vel.y**2 + vel.x**2)**(3/2)
 		return kappa
 	
 	def get_lat_long_poses(self, ts):
@@ -198,13 +198,13 @@ class PathPlanner:
 		# current and final states
 		T = self.final_time
 
-		psn = self.current_state.pos.n
+		psn = self.current_state.pos.y
 
-		vsn = self.current_state.vel.n
-		vst = self.current_state.vel.t
+		vsn = self.current_state.vel.y
+		vst = self.current_state.vel.x
 
-		asn = self.current_state.acc.n
-		ast = self.current_state.acc.t
+		asn = self.current_state.acc.y
+		ast = self.current_state.acc.x
 
 		pen = self.final_lat_pos
 		
@@ -317,6 +317,8 @@ class PathPlanner:
 	def get_object_function_gradient_numeric(self, x):
 		self.generate_path(x)
 
+		T, pen, vet = x
+
 		dT   = 0.0001
 		dpen = 0.0001
 		dvet = 0.0001
@@ -334,15 +336,13 @@ class PathPlanner:
 
 	def get_constraint_function_1(self, t):
 		pt = self.get_lat_long_pos(t)
-		pnt = pt.n
-		g1 = pnt - self.dmax
+		ret = self.road.get_projection(pt)
+		if ret is not None:
+			c, dist = ret
+			g1 = dist - self.dmax
+		else:
+			g1 = 999.
 		return g1
-		
-	def get_constraint_function_2(self, t):
-		pt = self.get_lat_long_pos(t)
-		pnt = pt.n
-		g2 = -pnt - self.dmax
-		return g2
 		
 	def get_constraint_function_3(self, t):
 		vt = self.get_lat_long_vel(t)
@@ -368,15 +368,6 @@ class PathPlanner:
 		max_value = -np.inf
 		for t in np.linspace(0, self.final_time, 10):
 			value = self.get_constraint_function_1(t)
-			max_value = max(value, max_value)
-		return max_value
-		
-	def get_constraint_function_max_2(self, x):
-		self.generate_path(x)
-
-		max_value = -np.inf
-		for t in np.linspace(0, self.final_time, 10):
-			value = self.get_constraint_function_2(t)
 			max_value = max(value, max_value)
 		return max_value
 		
@@ -410,7 +401,6 @@ class PathPlanner:
 	def get_constraint_function_max(self, x):
 		g_max = np.array([
 			self.get_constraint_function_max_1(x),
-			self.get_constraint_function_max_2(x),
 			self.get_constraint_function_max_3(x),
 			self.get_constraint_function_max_4(x),
 			self.get_constraint_function_max_5(x),
@@ -463,9 +453,7 @@ class PathPlanner:
 		new_ps = []
 		for t in ts:
 			pos = self.get_lat_long_pos(t)
-			s, d = pos.t, pos.n
-			new_p = road.get_cartesian_pos(s, d).numpy
-			new_ps.append(new_p)
+			new_ps.append(pos.numpy)
 		new_ps = np.array(new_ps)
 
 		axes.plot(new_ps[:,0], new_ps[:,1], color='red')
@@ -534,15 +522,13 @@ class PathPlanner:
 		
 
 if __name__ == '__main__':
-	kph = 1/3.6
+	# way points
+	wx = [0.0, 10.0, 20.5, 35.0, 70.5]
+	wy = [0.0, -6.0, 5.0, 6.5, 0.0]
+	hwidth = 3
 
-	road = Road(Point2DArray(
-		(0.0, 0.0),
-		(10.0, -6.0),
-		(20.5, 5.0),
-		(35.0, 6.5),
-		(70.5, 0.0),
-	))
+	road = Road(wx, wy, hwidth)
+
 	vref = 10 # m/s
 	kt = 1e-2
 	kd = 1e-2
@@ -555,7 +541,7 @@ if __name__ == '__main__':
 
 	planner = PathPlanner(road, vref, kt, kd, kv, dmax, vmax, amax, kmax)
 
-	current_state = VehicleState(pos=PointNT(0,0), vel=PointNT(0,10), acc=PointNT(0,0))
+	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(0,10), acc=Vector2D(0,0))
 	planner.set_current_state(current_state)
 
 	# T = 12
@@ -594,7 +580,7 @@ if __name__ == '__main__':
 
 	T0 = 12
 	pen0 = 5
-	vet0 = 27*kph
+	vet0 = 10
 	x0 = np.array([T0, pen0, vet0])
 
 	x_opt, L_opt, status, history = lagrangian(f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=1000, alpha=1e-3, beta=1e-2)

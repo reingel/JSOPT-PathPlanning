@@ -4,101 +4,73 @@ from math import floor
 import typing
 
 from numpy.core.defchararray import center
-from point2d import Point2D, Point2DArray
+from vector import Vector2D
 from cubic_spline_planner import Spline2D
 
+DEGREE = np.pi/180
+ANGLE90 = np.pi/2
 
 class Road(Spline2D):
-	def __init__(self, points: Point2DArray):
-		"""
-		ARGUMENTS
-			points: Point2DArray object to represent 2D points
-			ds: delta distance
-		"""
-		self.array = []
-		for p in points:
-			self.array.append(p.numpy)
-		self.array = np.array(self.array)
-		wx = self.array[:,0]
-		wy = self.array[:,1]
+	def __init__(self, wx, wy, hwidth, ds=1.0):
 		super().__init__(wx, wy)
+		self.hwidth = hwidth
+		self.ds = ds
+		self.s_list = np.arange(0, self.smax, ds)
+		self.center_points = self._calc_center_points(ds)
+		self.yaws = self._calc_yaws(ds)
+		yaw_p90 = self.yaws + ANGLE90
+		yaw_m90 = self.yaws - ANGLE90
+		self.left_points = self.center_points + hwidth * np.column_stack([np.cos(yaw_p90), np.sin(yaw_p90)])
+		self.right_points = self.center_points + hwidth * np.column_stack([np.cos(yaw_m90), np.sin(yaw_m90)])
 
 	@property
-	def s_max(self):
+	def smax(self):
 		if len(self.s) > 0:
 			return self.s[-1]
 		else:
 			return 0.
 
-	def s_list(self, ds=None):
-		return np.arange(self.s_max // ds + 1) * ds
-
-	def get_waypoint(self, s):
-		"""
-		ARGUMENTS
-			s: travel distance along the center line
-		RETURN
-			x, y, phi: global position and heading angle
-		"""
-		return Point2D(self.calc_position(s))
+	def _calc_center_point(self, s):
+		return Vector2D(*self.calc_position(s))
 	
-	def get_waypoints(self, ds):
-		s_list = self.s_list(ds=ds)
-
+	def _calc_center_points(self, ds):
 		ps = []
-		for s in s_list:
-			ps.append(self.get_waypoint(s))
-		
+		for s in self.s_list:
+			ps.append(self._calc_center_point(s).numpy)
 		return np.array(ps)
 	
-	def get_yaw(self, s):
+	def _calc_yaw(self, s):
 		return self.calc_yaw(s)
 	
-	def get_yaws(self, ds):
-		s_list = self.s_list(ds=ds)
-
+	def _calc_yaws(self, ds):
 		yaws = []
-		for s in s_list:
-			yaws.append(self.get_yaw(s))
-		
+		for s in self.s_list:
+			yaws.append(self._calc_yaw(s))
 		return np.array(yaws)
 	
-	def get_cartesian_pos(self, s, d):
-		center_pos = self.calc_position(s)
-		yaw = self.calc_yaw(s)
-		pos = center_pos + d * np.array([np.cos(yaw + np.pi/2), np.sin(yaw + np.pi/2)])
-		return Point2D(pos)
+	def get_projection(self, p: Vector2D):
+		for center, yaw in zip(self.center_points, self.yaws):
+			v = p - Vector2D(*center)
+			if abs(abs(v.angle - yaw) - ANGLE90) < 3*DEGREE: # TODO
+				return Vector2D(*center), v.norm
+		return None
 
-	
 	def draw(self, axes, ds, dmax):
-		yaws = self.get_yaws(ds)
-		center = self.get_waypoints(ds)
-		left = center + dmax * np.vstack([np.cos(yaws + np.pi/2), np.sin(yaws + np.pi/2)]).transpose()
-		right = center + dmax * np.vstack([np.cos(yaws - np.pi/2), np.sin(yaws - np.pi/2)]).transpose()
-
-		axes.plot(left[:,0], left[:,1], color='black')
-		axes.plot(center[:,0], center[:,1], linestyle='dotted', color='black')
-		axes.plot(right[:,0], right[:,1], color='black')
+		axes.plot(self.left_points[:,0], self.left_points[:,1], color='black')
+		axes.plot(self.center_points[:,0], self.center_points[:,1], linestyle='dotted', color='black')
+		axes.plot(self.right_points[:,0], self.right_points[:,1], color='black')
 	
 
 if __name__ == '__main__':
 	# way points
 	wx = [0.0, 10.0, 20.5, 35.0, 70.5]
 	wy = [0.0, -6.0, 5.0, 6.5, 0.0]
+	hwidth = 3
 
-	road = Road(Point2DArray(
-		(0.0, 0.0),
-		(10.0, -6.0),
-		(20.5, 5.0),
-		(35.0, 6.5),
-		(70.5, 0.0),
-	))
+	road = Road(wx, wy, hwidth)
 
-	s_max = road.s_max
-	s_list = road.s_list(ds=5)
-
-	print(s_max)
-	print(s_list)
+	print(road.smax)
+	print(road.s_list)
 
 	fig, axes = plt.subplots()
 	axes.set_aspect(1)
@@ -106,8 +78,15 @@ if __name__ == '__main__':
 	axes.set_ylim(-15, 15)
 
 	road.draw(axes, ds=1, dmax=3)
-	road.get_cartesian_pos(75, 3).draw(axes)
-	road.get_cartesian_pos(75, -3).draw(axes)
+	Vector2D(70, -5).draw(axes, color='red', marker='o')
+
+	p = Vector2D(10,-5)
+	p.draw(axes, color='red', marker='o')
+	ret = road.get_projection(p)
+	if ret is not None:
+		c, dist = ret
+		print(c, dist)
+		c.draw(axes, color='red', marker='o')
 	
 	plt.grid(True)
 	plt.gcf().canvas.mpl_connect(
