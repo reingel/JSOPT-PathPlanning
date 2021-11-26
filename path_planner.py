@@ -5,6 +5,7 @@ from numpy.core.einsumfunc import _parse_possible_contraction
 from road import Road
 from vehicle_state import VehicleState
 from point2d import PointNT, Point2DArray
+from JSOPT.lagrangian import lagrangian
 
 def max0(x):
 	return max(x, 0)
@@ -119,6 +120,40 @@ class PathPlanner:
 		vel = self.get_lat_long_vel(t)
 		acc = self.get_lat_long_acc(t)
 		kappa = (vel.t * acc.n - vel.n * acc.t) / (vel.n**2 + vel.t**2)**(3/2)
+		return kappa
+	
+	def get_lat_long_poses(self, ts):
+		pn = np.dot(self.lat_poly_coef, ts**np.arange(6).reshape((-1,1)))
+		pt = np.dot(self.long_poly_coef, ts**np.arange(5).reshape((-1,1)))
+		return np.column_stack((pn, pt))
+	
+	def get_lat_long_vels(self, ts):
+		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
+		at0, at1, at2, at3, at4 = self.long_poly_coef
+		vn = np.dot(np.array([an1, 2*an2, 3*an3, 4*an4, 5*an5]), ts**np.arange(5).reshape((-1,1)))
+		vt = np.dot(np.array([at1, 2*at2, 3*at3, 4*at4]), ts**np.arange(4).reshape((-1,1)))
+		return np.column_stack((vn, vt))
+	
+	def get_lat_long_accs(self, ts):
+		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
+		at0, at1, at2, at3, at4 = self.long_poly_coef
+		an = np.dot(np.array([2*an2, 6*an3, 12*an4, 20*an5]), ts**np.arange(4).reshape((-1,1)))
+		at = np.dot(np.array([2*at2, 6*at3, 12*at4]), ts**np.arange(3).reshape((-1,1)))
+		return np.column_stack((an, at))
+	
+	def get_lat_long_jrks(self, ts):
+		an0, an1, an2, an3, an4, an5 = self.lat_poly_coef
+		at0, at1, at2, at3, at4 = self.long_poly_coef
+		jn = np.dot(np.array([6*an3, 24*an4, 60*an5]), ts**np.arange(3).reshape((-1,1)))
+		jt = np.dot(np.array([6*at3, 24*at4]), ts**np.arange(2).reshape((-1,1)))
+		return np.column_stack((jn, jt))
+	
+	def get_curvatures(self, ts):
+		vel = self.get_lat_long_vels(ts)
+		acc = self.get_lat_long_accs(ts)
+		vn, vt = vel[:,0], vel[:,1]
+		an, at = acc[:,0], acc[:,1]
+		kappa = (vt * an - vn * at) / (vn**2 + vt**2)**(3/2)
 		return kappa
 	
 	def get_object_function_jerk(self):
@@ -267,7 +302,9 @@ class PathPlanner:
 		J4_x = np.array([0, 0, 2*(vet - self.ref_vel)])
 		return J4_x
 	
-	def get_object_function_gradient(self):
+	def get_object_function_gradient(self, x):
+		self.generate_path(x)
+
 		J1_x = self.get_object_function_jerk_gradient()
 		J2_x = self.get_object_function_time_gradient()
 		J3_x = self.get_object_function_final_lat_pos_gradient()
@@ -277,7 +314,9 @@ class PathPlanner:
 
 		return J_x
 	
-	def get_object_function_gradient_numeric(self):
+	def get_object_function_gradient_numeric(self, x):
+		self.generate_path(x)
+
 		dT   = 0.0001
 		dpen = 0.0001
 		dvet = 0.0001
@@ -379,7 +418,9 @@ class PathPlanner:
 		return g_max
 		
 
-	def get_constraint_function_jacobian(self):
+	def get_constraint_function_jacobian(self, x):
+		self.generate_path(x)
+
 		T = self.final_time
 		pen = self.final_lat_pos
 		vet = self.final_long_vel
@@ -388,49 +429,6 @@ class PathPlanner:
 		dpen = 0.0001
 		dvet = 0.0001
 
-		# g11u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
-		# g11d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
-		# g12u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
-		# g12d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
-		# g13u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
-		# g13d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
-		# dg1 = np.array([(g11u-g11d)/dT/2, (g12u-g12d)/dpen/2, (g13u-g13d)/dvet/2])
-
-		# g21u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
-		# g21d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
-		# g22u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
-		# g22d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
-		# g23u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
-		# g23d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
-		# dg2 = np.array([(g21u-g21d)/dT/2, (g22u-g22d)/dpen/2, (g23u-g23d)/dvet/2])
-
-		# g31u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
-		# g31d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
-		# g32u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
-		# g32d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
-		# g33u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
-		# g33d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
-		# dg3 = np.array([(g31u-g31d)/dT/2, (g32u-g32d)/dpen/2, (g33u-g33d)/dvet/2])
-
-		# g41u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
-		# g41d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
-		# g42u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
-		# g42d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
-		# g43u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
-		# g43d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
-		# dg4 = np.array([(g41u-g41d)/dT/2, (g42u-g42d)/dpen/2, (g43u-g43d)/dvet/2])
-
-		# g51u = self.get_constraint_function_max_1(np.array([T + dT, pen, vet]))
-		# g51d = self.get_constraint_function_max_1(np.array([T - dT, pen, vet]))
-		# g52u = self.get_constraint_function_max_1(np.array([T, pen + dpen, vet]))
-		# g52d = self.get_constraint_function_max_1(np.array([T, pen - dpen, vet]))
-		# g53u = self.get_constraint_function_max_1(np.array([T, pen, vet + dvet]))
-		# g53d = self.get_constraint_function_max_1(np.array([T, pen, vet - dvet]))
-		# dg5 = np.array([(g51u-g51d)/dT/2, (g52u-g52d)/dpen/2, (g53u-g53d)/dvet/2])
-
-		# dg = np.vstack([dg1, dg2, dg3, dg4, dg5])
-
-		
 		g1u = self.get_constraint_function_max(np.array([T + dT, pen, vet]))
 		g1d = self.get_constraint_function_max(np.array([T - dT, pen, vet]))
 		g2u = self.get_constraint_function_max(np.array([T, pen + dpen, vet]))
@@ -453,6 +451,87 @@ class PathPlanner:
 			mu = np.expand_dims(np.array(list(map(max0, mu.squeeze(1) + self.beta*g))), 1)
 		
 		return x
+	
+	def draw(self, axes, x):
+		self.generate_path(x)
+
+		T, pen, vet = x
+		road = self.road
+
+		ts = np.linspace(0, T, 30)
+
+		new_ps = []
+		for t in ts:
+			pos = self.get_lat_long_pos(t)
+			s, d = pos.t, pos.n
+			new_p = road.get_cartesian_pos(s, d).numpy
+			new_ps.append(new_p)
+		new_ps = np.array(new_ps)
+
+		axes.plot(new_ps[:,0], new_ps[:,1], color='red')
+		axes.grid(True)
+
+	def plot_vel(self, axes, x):
+		self.generate_path(x)
+		T = x[0]
+		ts = np.linspace(0, T, 20)
+
+		pos = self.get_lat_long_poses(ts)
+		vel = self.get_lat_long_vels(ts)
+
+		s = pos[:,1]
+		vel_mag = np.sqrt(vel[:,0]**2 + vel[:,1]**2)
+		
+		axes.plot(s, vel_mag)
+		axes.grid(True)
+		axes.set_ylabel('Velocity [m/s]')
+		
+	def plot_acc(self, axes, x):
+		self.generate_path(x)
+		T = x[0]
+		ts = np.linspace(0, T, 20)
+
+		pos = self.get_lat_long_poses(ts)
+		vel = self.get_lat_long_vels(ts)
+		acc = self.get_lat_long_accs(ts)
+
+		s = pos[:,1]
+		acc_mag = np.sqrt(acc[:,0]**2 + acc[:,1]**2)
+		
+		axes.plot(s, acc_mag)
+		axes.grid(True)
+		axes.set_ylabel('Acceleration [m/s^2]')
+		
+	def plot_jrk(self, axes, x):
+		self.generate_path(x)
+		T = x[0]
+		ts = np.linspace(0, T, 20)
+
+		pos = self.get_lat_long_poses(ts)
+		jrk = self.get_lat_long_jrks(ts)
+
+		s = pos[:,1]
+		jrk_mag = np.sqrt(jrk[:,0]**2 + jrk[:,1]**2)
+		
+		axes.plot(s, jrk_mag)
+		axes.grid(True)
+		axes.set_ylabel('Jerk [m/s^3]')
+		
+	def plot_kpa(self, axes, x):
+		self.generate_path(x)
+		T = x[0]
+		ts = np.linspace(0, T, 20)
+
+		pos = self.get_lat_long_poses(ts)
+		kpa = self.get_curvatures(ts)
+
+		s = pos[:,1]
+		
+		axes.plot(s, kpa)
+		axes.grid(True)
+		axes.set_xlabel('Travel distance [m]')
+		axes.set_ylabel('Curvature [1/m]')
+		
 
 if __name__ == '__main__':
 	kph = 1/3.6
@@ -464,78 +543,79 @@ if __name__ == '__main__':
 		(35.0, 6.5),
 		(70.5, 0.0),
 	))
-	vref = 20*kph
-	kt = 1
-	kd = 1
-	kv = 1
+	vref = 10 # m/s
+	kt = 1e-2
+	kd = 1e-2
+	kv = 1e-2
 
 	dmax = 1
-	vmax = 30*kph
-	amax = 9.81
+	vmax = 20 # m/s
+	amax = 9.81 # m/s^2
 	kmax = 10
 
 	planner = PathPlanner(road, vref, kt, kd, kv, dmax, vmax, amax, kmax)
-	current_state = VehicleState()
 
-	T = 30
-	pen = 5
-	vet = 27*kph
-	x = np.array([T, pen, vet])
-
+	current_state = VehicleState(pos=PointNT(0,0), vel=PointNT(0,10), acc=PointNT(0,0))
 	planner.set_current_state(current_state)
-	planner.generate_path(x)
 
-	J1 = planner.get_object_function_jerk()
-	J2 = planner.get_object_function_time()
-	J3 = planner.get_object_function_final_lat_pos()
-	J4 = planner.get_object_function_final_long_vel()
-	J = planner.get_object_function(x)
+	# T = 12
+	# pen = 5
+	# vet = 27*kph
+	# x = np.array([T, pen, vet])
 
-	print(f'{J=:6.4f} {J1=:6.4f} {J2=:6.4f} {J3=:6.4f} {J4=:6.4f}')
+	# J1 = planner.get_object_function_jerk()
+	# J2 = planner.get_object_function_time()
+	# J3 = planner.get_object_function_final_lat_pos()
+	# J4 = planner.get_object_function_final_long_vel()
+	# J = planner.get_object_function(x)
 
-	# analytic differentiation
-	dJ = planner.get_object_function_gradient()
-	dJ_str = ' '.join([str(s).rjust(5) for s in np.round(dJ, 3)])
-	print(f'{dJ_str}')
+	# print(f'{J=:6.4f} {J1=:6.4f} {J2=:6.4f} {J3=:6.4f} {J4=:6.4f}')
 
-	dJ_numeric = planner.get_object_function_gradient_numeric()
-	dJ_numeric_str = ' '.join([str(s).rjust(5) for s in np.round(dJ_numeric, 3)])
-	print(f'{dJ_numeric_str}')
+	# # analytic differentiation
+	# dJ = planner.get_object_function_gradient(x)
+	# dJ_str = ' '.join([str(s).rjust(5) for s in np.round(dJ, 3)])
+	# print(f'{dJ_str}')
 
-	g = planner.get_constraint_function_max(x)
-	print(g)
+	# dJ_numeric = planner.get_object_function_gradient_numeric(x)
+	# dJ_numeric_str = ' '.join([str(s).rjust(5) for s in np.round(dJ_numeric, 3)])
+	# print(f'{dJ_numeric_str}')
 
-	dg = planner.get_constraint_function_jacobian()
-	print(dg)
+	# g = planner.get_constraint_function_max(x)
+	# print(g)
 
-	xopt = planner.lagrangian()
-	print(xopt)
+	# dg = planner.get_constraint_function_jacobian(x)
+	# print(dg)
 
-	planner.generate_path(xopt)
-	T = xopt[0]
+
+	f = planner.get_object_function
+	gradf = planner.get_object_function_gradient
+	g = planner.get_constraint_function_max
+	gradg = planner.get_constraint_function_jacobian
+
+	T0 = 12
+	pen0 = 5
+	vet0 = 27*kph
+	x0 = np.array([T0, pen0, vet0])
+
+	x_opt, L_opt, status, history = lagrangian(f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=1000, alpha=1e-3, beta=1e-2)
+	print(f"Lagrangian: {status=}, x_opt={np.round(x_opt,2)}, L_opt={np.round(L_opt,2)}, num_iter={len(history['x'])-1}")
 
 	# draw path
-	ts = np.linspace(0, T, 10)
+	_, ax = plt.subplots(5,1)
+	ax[0].set_aspect(1)
+	ax[0].set_xlim(-5, 75)
+	ax[0].set_ylim(-15, 15)
 
-	plt.figure(1)
-	plt.clf()
+	road.draw(ax[0], ds=1, dmax=3)
+	planner.draw(ax[0], x_opt)
+	planner.plot_vel(ax[1], x_opt)
+	planner.plot_acc(ax[2], x_opt)
+	planner.plot_jrk(ax[3], x_opt)
+	planner.plot_kpa(ax[4], x_opt)
+	
 	plt.grid(True)
 	plt.gcf().canvas.mpl_connect(
 		'key_release_event',
 		lambda event: [exit(0) if event.key == 'escape' else None])
 
-	for t in ts:
-		pos = planner.get_lat_long_pos(t)
-		vel = planner.get_lat_long_vel(t)
-		acc = planner.get_lat_long_acc(t)
-		jrk = planner.get_lat_long_jrk(t)
-		kappa = planner.get_curvature(t)
-		R = min(1/(kappa+1e-6)/10, 10)
-		vel_unit = vel.normalized
-		plt.plot(pos.t, pos.n, 'b.')
-		plt.plot([pos.t, pos.t + vel.t], [pos.n, pos.n + vel.n], 'r-')
-		# plt.plot([pos.t, pos.t + acc.t], [pos.n, pos.n + acc.n], 'g-')
-		# plt.plot([pos.t, pos.t + jrk.t], [pos.n, pos.n + jrk.n], 'k-')
-		# plt.plot([pos.t, pos.t - vel_unit.n * R], [pos.n, pos.n + vel_unit.t * R], 'g-')
-	
 	plt.show()

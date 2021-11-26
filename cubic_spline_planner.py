@@ -42,10 +42,10 @@ class Spline:
 
         """
 
-        if t < self.x[0]:
-            return None
-        elif t > self.x[-1]:
-            return None
+        # if t < self.x[0]:
+        #     return None
+        # elif t > self.x[-1]:
+        #     return None
 
         i = self.__search_index(t)
         dx = t - self.x[i]
@@ -61,10 +61,10 @@ class Spline:
         if t is outside of the input x, return None
         """
 
-        if t < self.x[0]:
-            return None
-        elif t > self.x[-1]:
-            return None
+        # if t < self.x[0]:
+        #     return None
+        # elif t > self.x[-1]:
+        #     return None
 
         i = self.__search_index(t)
         dx = t - self.x[i]
@@ -76,10 +76,10 @@ class Spline:
         Calc second derivative
         """
 
-        if t < self.x[0]:
-            return None
-        elif t > self.x[-1]:
-            return None
+        # if t < self.x[0]:
+        #     return None
+        # elif t > self.x[-1]:
+        #     return None
 
         i = self.__search_index(t)
         dx = t - self.x[i]
@@ -90,7 +90,10 @@ class Spline:
         """
         search data segment index
         """
-        return bisect.bisect(self.x, x) - 1
+        i = bisect.bisect(self.x, x) - 1
+        i = max(i, 0)
+        i = min(i, len(self.x) - 2)
+        return i
 
     def __calc_A(self, h):
         """

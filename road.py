@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from math import floor
 import typing
+
+from numpy.core.defchararray import center
 from point2d import Point2D, Point2DArray
 from cubic_spline_planner import Spline2D
 
@@ -39,16 +41,44 @@ class Road(Spline2D):
 			x, y, phi: global position and heading angle
 		"""
 		return Point2D(self.calc_position(s))
+	
+	def get_waypoints(self, ds):
+		s_list = self.s_list(ds=ds)
 
-	def is_on_road(self, lat, long):
-		"""
-		ARGUMENTS
-			lat: lateral location in Frenet coordinates
-			long: longitudinal location in Frenet coordiantes
-		RETURN
-			[bool]: True if the input location is on this road
-		"""
-		pass
+		ps = []
+		for s in s_list:
+			ps.append(self.get_waypoint(s))
+		
+		return np.array(ps)
+	
+	def get_yaw(self, s):
+		return self.calc_yaw(s)
+	
+	def get_yaws(self, ds):
+		s_list = self.s_list(ds=ds)
+
+		yaws = []
+		for s in s_list:
+			yaws.append(self.get_yaw(s))
+		
+		return np.array(yaws)
+	
+	def get_cartesian_pos(self, s, d):
+		center_pos = self.calc_position(s)
+		yaw = self.calc_yaw(s)
+		pos = center_pos + d * np.array([np.cos(yaw + np.pi/2), np.sin(yaw + np.pi/2)])
+		return Point2D(pos)
+
+	
+	def draw(self, axes, ds, dmax):
+		yaws = self.get_yaws(ds)
+		center = self.get_waypoints(ds)
+		left = center + dmax * np.vstack([np.cos(yaws + np.pi/2), np.sin(yaws + np.pi/2)]).transpose()
+		right = center + dmax * np.vstack([np.cos(yaws - np.pi/2), np.sin(yaws - np.pi/2)]).transpose()
+
+		axes.plot(left[:,0], left[:,1], color='black')
+		axes.plot(center[:,0], center[:,1], linestyle='dotted', color='black')
+		axes.plot(right[:,0], right[:,1], color='black')
 	
 
 if __name__ == '__main__':
@@ -73,13 +103,18 @@ if __name__ == '__main__':
 	fig, axes = plt.subplots()
 	axes.set_aspect(1)
 	axes.set_xlim(-5, 75)
-	axes.set_ylim(-10, 10)
+	axes.set_ylim(-15, 15)
 
-	for s in s_list:
-		road.get_waypoint(s).draw(axes)
+	road.draw(axes, ds=1, dmax=3)
+	road.get_cartesian_pos(75, 3).draw(axes)
+	road.get_cartesian_pos(75, -3).draw(axes)
 	
 	plt.grid(True)
-	plt.pause(1)
+	plt.gcf().canvas.mpl_connect(
+		'key_release_event',
+		lambda event: [exit(0) if event.key == 'escape' else None])
+
+	plt.show()
 
 	
 
