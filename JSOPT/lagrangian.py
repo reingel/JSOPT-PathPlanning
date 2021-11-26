@@ -32,23 +32,36 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 		- history: sequencially stored values of x, d, fval, rate_conv (dictionary)
 	"""
 
-	# Lagrangian multiplier
+	# no. of design variables
 	try:
-		N = len(gradg(x0))
+		N = len(x0)
 	except:
 		N = 1
-	mu0 = np.zeros(N)
+
+	# no. of inequality constraints
+	try:
+		M = len(g(x0))
+	except:
+		M = 1
+
+	# Lagrangian multiplier
+	mu0 = np.zeros(M)
 	
 	# set initial values
 	k = 0
 	xk = x0
-	muk = mu0
-	Lk = f(xk) + np.dot(g(xk), muk)
-	dk = gradf(xk) + np.dot(gradg(xk).transpose(), muk)
+	muk = mu0 # make it a column vector
+
+	fk = f(xk)
+	gk = g(xk)
+	gradfk = gradf(xk)
+	jacobgk = gradg(xk)
+	Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
+	dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
 	# create additional return values
 	status = CONVERGED
-	history = {'x': [xk], 'd': [dk], 'L': [Lk]}
+	history = {'x': [xk], 'd': [dk], 'fval': [fk], 'L': [Lk]}
 
 	# search loop
 	while (np.linalg.norm(dk) > epsilon): # stopping criteria 1
@@ -56,15 +69,22 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 		xk = xk - alpha * dk
 		muk = vec_max_zero(muk + beta * g(xk_temp))
 		
-		Lk = f(xk) + np.dot(g(xk), muk)
-		dk = gradf(xk) + np.dot(gradg(xk).transpose(), muk)
+		fk = f(xk)
+		gk = g(xk)
+		gradfk = gradf(xk)
+		jacobgk = gradg(xk)
+		Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
+		dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
 		# store histories
 		history['x'].append(xk)
 		history['d'].append(dk)
+		history['fval'].append(fk)
 		history['L'].append(Lk)
 
 		k += 1
+		if k//100*100 == k:
+			print(f'Lagrangian: {k}  {fk=:5.2f}  {Lk=:5.2f}  x={np.round(xk,2)}')
 		if k == max_num_iter: # stopping criteria 2
 			status = REACHED_MAX_ITER
 			print(f'Lagrangian: reached the maximum number of iteration: {k}')
@@ -72,18 +92,19 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 	
 	# solutions to return
 	x_opt = xk
-	L_opt = Lk
+	fval_opt = fk
 
 	# convert to numpy array
 	history['x'] = np.array(history['x'])
 	history['d'] = np.array(history['d'])
+	history['fval'] = np.array(history['fval'])
 	history['L'] = np.array(history['L'])
 
 	# calculate and add the rate of convergence to history
-	history['rate_conv'] = (history['L'][1:] - L_opt) / (history['L'][:-1] - L_opt)
+	history['rate_conv'] = (history['fval'][1:] - fval_opt) / (history['fval'][:-1] - fval_opt)
 	history['rate_conv'] = np.insert(history['rate_conv'], 0, 1.) # insert 1 at 0-index to match its length with others
 
-	return x_opt, L_opt, status, history
+	return x_opt, fval_opt, status, history
 
 
 # test code
@@ -98,16 +119,9 @@ if __name__ == '__main__':
 	
 	x0 = Vector([-2, -1.4])
 
-	# def calc_alpha_max(x, d):
-	# 	alpha_max = 2
-	# 	if d[1] > 0:
-	# 		alpha_max = min(alpha_max, (0.5 - x[1]) / d[1])
-	# 	return alpha_max
-	calc_alpha_max = 9
+	x_opt, fval_opt, status, history = lagrangian(f, gradf, g, gradg, x0, epsilon=1e-2, max_num_iter=500, alpha=1e-2, beta=1e-2)
 
-	x_opt, L_opt, status, history = lagrangian(f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=500, alpha=1e-3, beta=1e-2)
-
-	print(f"Lagrangian: {status=}, x_opt={np.round(x_opt,2)}, L_opt={np.round(L_opt,2)}, num_iter={len(history['x'])-1}")
+	print(f"Lagrangian: {status=}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, num_iter={len(history['x'])-1}")
 
 	fig, ax = plt.subplots(2,1)
 	ax[0].set_aspect(1.0)
@@ -126,7 +140,10 @@ if __name__ == '__main__':
 	ax[0].scatter(history['x'][-1,0], history['x'][-1,1], color='red')
 	ax[1].grid(True)
 	# ax[1].plot(history['d'], label='d')
-	ax[1].plot(history['L'], label='L')
+	ax[1].plot(history['fval'], label='fval')
 	ax[1].plot(history['rate_conv'], label='rate_conv')
 	ax[1].legend(loc='best')
+	plt.gcf().canvas.mpl_connect(
+		'key_release_event',
+		lambda event: [exit(0) if event.key == 'escape' else None])
 	plt.show()
