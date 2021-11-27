@@ -1,12 +1,7 @@
-from bisect import bisect
 import numpy as np
 import matplotlib.pyplot as plt
-from math import floor
-import typing
 import bisect
-
-from numpy.core.defchararray import center
-from vector import Vector2D
+from vector import *
 from cubic_spline_planner import Spline2D
 
 DEGREE = np.pi/180
@@ -63,28 +58,29 @@ class Road(Spline2D):
 		yaw = self.yaws[idx]
 		return yaw
 	
-	def convert_xy2tn(self, s, vxy: Vector2D):
+	def convert_xy2tn(self, s, vector: Vector2D):
 		idx = self._get_index(s)
 		yaw = self.yaws[idx]
-		vtn = vxy.rotated(-yaw)
+		vtn = vector.rotated(-yaw)
 		return vtn
 	
-	def convert_tn2xy(self, s, vtn: Vector2D):
+	def convert_tn2xy(self, s, vector: Vector2D):
 		idx = self._get_index(s)
 		yaw = self.yaws[idx]
-		vxy = vtn.rotated(yaw)
+		vxy = vector.rotated(yaw)
 		return vxy
 	
-	def get_projection(self, p: Vector2D):
-		dmin = np.inf
-		imin = 0
-		for i, (s, center, yaw) in enumerate(zip(self.s_list, self.center_points, self.yaws)):
-			dist = (p - Vector2D(*center)).norm
-			if dist < dmin:
-				dmin = dist
-				imin = i
-			# if abs(abs(c2p.angle - yaw) - ANGLE90) < 5*DEGREE: # TODO
-		return self.s_list[imin], Vector2D(*self.center_points[imin]), dmin
+	def get_projection_distance(self, p: Vector2DArray):
+		center_x = self.center_points[:,0]
+		center_y = self.center_points[:,1]
+		dist = np.sqrt(np.min((column_vector(p.x) - row_vector(center_x))**2 + (column_vector(p.y) - row_vector(center_y))**2, axis=1))
+		return dist
+	
+	def get_projection_point(self, p: Vector2D):
+		center_x = self.center_points[:,0]
+		center_y = self.center_points[:,1]
+		imin = np.argmin((column_vector(p.x) - row_vector(center_x))**2 + (column_vector(p.y) - row_vector(center_y))**2, axis=1)
+		return self.s_list[imin], Vector2D(*self.center_points[imin][0])
 
 	def draw(self, axes, ds, dmax):
 		axes.plot(self.left_points[:,0], self.left_points[:,1], color='black')
@@ -111,15 +107,20 @@ if __name__ == '__main__':
 	road.draw(axes, ds=1, dmax=3)
 	Vector2D(70, 5).draw(axes, color='red', marker='o')
 
-	for x in np.arange(0,70,1):
-		p = Vector2D(x,-2)
-		p.draw(axes, color='green', marker='o')
-		ret = road.get_projection(p)
-		if ret is not None:
-			s, c, dist = ret
-			print(s, p, c, dist)
-			c.draw(axes, color='red', marker='o')
+	# for x in np.arange(0,70,1):
+	# 	p = Vector2D(x,-2)
+	# 	p.draw(axes, color='green', marker='o')
+	# 	ret = road.get_projection(p)
+	# 	if ret is not None:
+	# 		s, c, dist = ret
+	# 		print(s, p, c, dist)
+	# 		c.draw(axes, color='red', marker='o')
 	
+	p = Vector2DArray(((10,1), (50,6)))
+	p.draw(axes, color='green', marker='o')
+	dist = road.get_projection_distance(p)
+	print(dist)
+
 	plt.grid(True)
 	plt.gcf().canvas.mpl_connect(
 		'key_release_event',

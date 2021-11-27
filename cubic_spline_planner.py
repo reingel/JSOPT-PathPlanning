@@ -1,4 +1,3 @@
-
 import math
 import numpy as np
 import bisect
@@ -173,22 +172,9 @@ class Spline2D:
         return yaw
 
 
-def calc_spline_course(x, y, ds=0.1):
-    sp = Spline2D(x, y)
-    s = list(np.arange(0, sp.s[-1], ds))
-
-    rx, ry, ryaw, rk = [], [], [], []
-    for i_s in s:
-        ix, iy = sp.calc_position(i_s)
-        rx.append(ix)
-        ry.append(iy)
-        ryaw.append(sp.calc_yaw(i_s))
-        rk.append(sp.calc_curvature(i_s))
-
-    return rx, ry, ryaw, rk, s
 
 
-def main():  # pragma: no cover
+if __name__ == '__main__':
     print("Spline 2D test")
     import matplotlib.pyplot as plt
     x = [-2.5, 0.0, 2.5, 5.0, 7.5, 3.0, -1.0]
@@ -230,7 +216,3 @@ def main():  # pragma: no cover
     plt.ylabel("curvature [1/m]")
 
     plt.show()
-
-
-if __name__ == '__main__':
-    main()
