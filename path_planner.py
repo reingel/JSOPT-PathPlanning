@@ -1,4 +1,6 @@
 import sys
+
+from quintic_polynomials import QuinticPolynomial, QuinticPolynomial2D
 sys.path.append('./JSOPT')
 
 from typing import final
@@ -6,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy.core.einsumfunc import _parse_possible_contraction
 from road import Road
+from vector import *
 from vehicle_state import VehicleState
 from vector import Vector2D
 from JSOPT.lagrangian import lagrangian
@@ -16,18 +19,16 @@ from JSOPT.line_search import bisection
 
 EPS = 1e-3
 
-def max0(x):
-	return max(x, 0)
-
 def vec_max_zero(x: np.ndarray):
 	return np.array([max(xi, 0) for xi in x])
 
 
 class PathPlanner:
-	def __init__(self, road: Road, ref_vel, kt, kd, kv, dmax, vmax, amax, kmax):
+	def __init__(self, road: Road, ref_vel, kj, kt, kd, kv, dmax, vmax, amax, kmax):
 		self.road = road
 
 		self.ref_vel = ref_vel
+		self.kj = kj
 		self.kt = kt
 		self.kd = kd
 		self.kv = kv
@@ -37,23 +38,23 @@ class PathPlanner:
 		self.amax = amax
 		self.kmax = kmax
 	
-	def set_current_state(self, s0, sf, current_state: VehicleState):
-		self.s0 = s0 # start position along road centerline
-		self.sf = sf # final position along road centerline
-		p0 = self.road.get_center_point(s=self.s0)
+	def set_travel_range(self, s0, sT):
+		self.s0 = s0 # current 1d position along road center line
+		self.sT = sT # final   1d position along road center line
+
+	def set_current_state(self, current_state: VehicleState): # current_state : vehicle state in t-n coordinates at t=0
+		pos0 = self.road.get_center_point(self.s0)
 		converted_state = VehicleState(
-			pos=self.road.convert_tn2xy(s=self.s0, vtn=current_state.pos) + p0,
-			vel=self.road.convert_tn2xy(s=self.s0, vtn=current_state.vel),
-			acc=self.road.convert_tn2xy(s=self.s0, vtn=current_state.acc),
+			pos = self.road.convert_tn2xy(self.s0, current_state.pos) + pos0,
+			vel = self.road.convert_tn2xy(self.s0, current_state.vel),
+			acc = self.road.convert_tn2xy(self.s0, current_state.acc),
 		)
 		self.current_state = converted_state
-
-	def generate_path(self, x: np.ndarray):
-		self.x = x
-		final_time, final_lat_pos, final_long_vel = x
-		self.final_time = final_time
-		self.final_lat_pos = final_lat_pos
-		self.final_long_vel = final_long_vel
+	
+	def set_final_state(self, final_state: Vector): # final_state (design variables) : vehicle state in t-n coordinates at t=T
+		self.final_time = final_state[0]
+		self.final_lat_pos = final_state[1]
+		self.final_long_vel = final_state[2]
 
 		final_state = VehicleState(
 			pos=Vector2D(0, self.final_lat_pos),
@@ -61,205 +62,77 @@ class PathPlanner:
 			acc=Vector2D(0, 0),
 		)
 
-		pf = self.road.get_center_point(s=self.sf)
+		posT = self.road.get_center_point(self.sT)
 		converted_state = VehicleState(
-			pos=self.road.convert_tn2xy(s=self.sf, vtn=final_state.pos) + pf,
-			vel=self.road.convert_tn2xy(s=self.sf, vtn=final_state.vel),
-			acc=self.road.convert_tn2xy(s=self.sf, vtn=final_state.acc),
+			pos=self.road.convert_tn2xy(self.sT, final_state.pos) + posT,
+			vel=self.road.convert_tn2xy(self.sT, final_state.vel),
+			acc=self.road.convert_tn2xy(self.sT, final_state.acc),
 		)
 		self.final_state = converted_state
 
-		self._calc_x_poly_coef()
-		self._calc_y_poly_coef()
+		self._generate_path()
 
-	def _calc_x_poly_coef(self):
-		"""
-		Use a quintic polynomial to model the x position
-		"""
-		T = self.final_time
+	def _generate_path(self):
+		self.quintic_poly2d = QuinticPolynomial2D(
+			T=self.final_time,
+			pos0=self.current_state.pos,
+			vel0=self.current_state.vel,
+			acc0=self.current_state.acc,
+			posT=self.final_state.pos,
+			velT=self.final_state.vel,
+			accT=self.final_state.acc,
+		)
 
-		pxs = self.current_state.pos.x
-		vxs = self.current_state.vel.x
-		axs = self.current_state.acc.x
-		pxe = self.final_state.pos.x
-		vxe = self.final_state.vel.x
-		axe = self.final_state.acc.x
-
-		dpx = pxe - pxs - vxs * T - 1/2 * axs * T**2
-		dvx = vxe - vxs - axs * T
-		dax = axe - axs
-
-		self.x_poly_coef = np.array([
-			pxs,
-			vxs,
-			1/2*axs,
-			( 10*dpx - 4*T*dvx + 1/2*T**2*dax) / T**3,
-			(-15*dpx + 7*T*dvx -     T**2*dax) / T**4,
-			(  6*dpx - 3*T*dvx + 1/2*T**2*dax) / T**5,
-		])
+	def get_xy_pos(self, t):
+		return self.quintic_poly2d.pos(t)
 	
-	def _calc_y_poly_coef(self):
-		"""
-		Use a quintic polynomial to model the y position
-		"""
-		T = self.final_time
-
-		pys = self.current_state.pos.y
-		vys = self.current_state.vel.y
-		ays = self.current_state.acc.y
-		pye = self.final_state.pos.y
-		vye = self.final_state.vel.y
-		aye = self.final_state.acc.y
-
-		dpy = pye - pys - vys * T - 1/2 * ays * T**2
-		dvy = vye - vys - ays * T
-		day = aye - ays
-
-		self.y_poly_coef = np.array([
-			pys,
-			vys,
-			1/2*ays,
-			( 10*dpy - 4*T*dvy + 1/2*T**2*day) / T**3,
-			(-15*dpy + 7*T*dvy -     T**2*day) / T**4,
-			(  6*dpy - 3*T*dvy + 1/2*T**2*day) / T**5,
-		])
+	def get_xy_vel(self, t):
+		return self.quintic_poly2d.vel(t)
 	
-	# def _calc_y_poly_coef(self):
-	# 	"""
-	# 	Use a quartic polynomial to model the longitudinal position
-	# 	"""
-	# 	T = self.final_time
-
-	# 	pts = self.current_state.pos.x
-	# 	vts = self.current_state.vel.x
-	# 	ats = self.current_state.acc.x
-	# 	vte = self.final_y_vel
-	# 	ate = 0.
-
-	# 	dvt = vte - vts - ats * T
-	# 	dat = ate - ats
-
-	# 	self.y_poly_coef = np.array([
-	# 		pts,
-	# 		vts,
-	# 		1/2*ats,
-	# 		(     dvt - 1/3*T*dat) / T**2,
-	# 		(-1/2*dvt + 1/4*T*dat) / T**3,
-	# 	])
-
-	def get_x_y_pos(self, t):
-		px = np.dot(self.x_poly_coef, t**np.arange(6))
-		py = np.dot(self.y_poly_coef, t**np.arange(6))
-		return Vector2D(px, py)
+	def get_xy_acc(self, t):
+		return self.quintic_poly2d.acc(t)
 	
-	def get_x_y_vel(self, t):
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		vx = np.dot(np.array([ax1, 2*ax2, 3*ax3, 4*ax4, 5*ax5]), t**np.arange(5))
-		vt = np.dot(np.array([ay1, 2*ay2, 3*ay3, 4*ay4, 5*ay5]), t**np.arange(5))
-		return Vector2D(vx, vt)
-	
-	def get_x_y_acc(self, t):
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		ax = np.dot(np.array([2*ax2, 6*ax3, 12*ax4, 20*ax5]), t**np.arange(4))
-		ay = np.dot(np.array([2*ay2, 6*ay3, 12*ay4, 20*ay5]), t**np.arange(4))
-		return Vector2D(ax, ay)
-	
-	def get_x_y_jrk(self, t):
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		jx = np.dot(np.array([6*ax3, 24*ax4, 60*ax5]), t**np.arange(3))
-		jy = np.dot(np.array([6*ay3, 24*ay4, 60*ay5]), t**np.arange(3))
-		return Vector2D(jx, jy)
+	def get_xy_jrk(self, t):
+		return self.quintic_poly2d.jrk(t)
 	
 	def get_curvature(self, t):
-		vel = self.get_x_y_vel(t)
-		acc = self.get_x_y_acc(t)
-		kappa = (vel.x * acc.y - vel.y * acc.x) / ((vel.y**2 + vel.x**2)**(3/2) + EPS)
-		return kappa
-	
-	def get_x_y_poses(self, ts):
-		px = np.dot(self.x_poly_coef, ts**np.arange(6).reshape((-1,1)))
-		py = np.dot(self.y_poly_coef, ts**np.arange(6).reshape((-1,1)))
-		return np.column_stack((px, py))
-	
-	def get_x_y_vels(self, ts):
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		vx = np.dot(np.array([ax1, 2*ax2, 3*ax3, 4*ax4, 5*ax5]), ts**np.arange(5).reshape((-1,1)))
-		vt = np.dot(np.array([ay1, 2*ay2, 3*ay3, 4*ay4, 5*ay5]), ts**np.arange(5).reshape((-1,1)))
-		return np.column_stack((vx, vt))
-	
-	def get_x_y_accs(self, ts):
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		ax = np.dot(np.array([2*ax2, 6*ax3, 12*ax4, 20*ax5]), ts**np.arange(4).reshape((-1,1)))
-		ay = np.dot(np.array([2*ay2, 6*ay3, 12*ay4, 20*ay5]), ts**np.arange(4).reshape((-1,1)))
-		return np.column_stack((ax, ay))
-	
-	def get_x_y_jrks(self, ts):
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		jx = np.dot(np.array([6*ax3, 24*ax4, 60*ax5]), ts**np.arange(3).reshape((-1,1)))
-		jy = np.dot(np.array([6*ay3, 24*ay4, 60*ay5]), ts**np.arange(3).reshape((-1,1)))
-		return np.column_stack((jx, jy))
-	
-	def get_curvatures(self, ts):
-		vel = self.get_x_y_vels(ts)
-		acc = self.get_x_y_accs(ts)
-		vx, vt = vel[:,0], vel[:,1]
-		ax, ay = acc[:,0], acc[:,1]
-		kappa = (vt * ax - vx * ay) / ((vx**2 + vt**2)**(3/2) + EPS)
-		return kappa
+		return self.quintic_poly2d.kpa(t)
 	
 	def get_object_function_jerk(self):
 		T = self.final_time
-		ax0, ax1, ax2, ax3, ax4, ax5 = self.x_poly_coef
-		ay0, ay1, ay2, ay3, ay4, ay5 = self.y_poly_coef
-		# J1 = 720*ax5**2*T**5 \
-		# 	+ 720*ax4*ax5*T**4 \
-		# 	+ (192*ax4**2 + 240*ax3*ax5 + 192*ay4**2)*T**3 \
-		# 	+ 144*(ax3*ax4 + ay3*ay4)*T**2 \
-		# 	+ 36*(ax3**2 + ay3**2)*T
+		ax0, ax1, ax2, ax3, ax4, ax5 = self.quintic_poly2d.x_poly.pos_coef
+		ay0, ay1, ay2, ay3, ay4, ay5 = self.quintic_poly2d.y_poly.pos_coef
 		J1 = np.dot(
-			np.array([
+			Vector([
 				60**2*(ax5**2 + ay5**2)/5,
 				2*24*60*(ax4*ax5 + ay4*ay5)/4,
 				(24**2*(ax4**2 + ay4**2) + 2*6*60*(ax3*ax5 + ay3*ay5))/3,
 				2*6*24*(ax3*ax4 + ay3*ay4)/2,
 				36*(ax3**2 + ay3**2),
 			]),
-			T**np.arange(5).reshape((-1,1))
+			T**column_vector(np.arange(5))
 		)
-			
 		return J1
 	
 	def get_object_function_time(self):
-		T = self.x[0]
-		J2 = T
+		J2 = self.final_time
 		return J2
 	
 	def get_object_function_final_n_pos(self):
-		pen = self.x[1]**2
-		J3 = pen**2
+		J3 = self.final_lat_pos**2
 		return J3
 	
 	def get_object_function_final_t_vel(self):
-		vet = self.x[2]**2
-		J4 = (vet - self.ref_vel)**2
+		J4 = (self.final_long_vel - self.ref_vel)**2
 		return J4
 	
-	def get_object_function_value(self, x):
-		self.generate_path(x)
-
+	def get_object_function_value(self, final_state: Vector):
+		self.set_final_state(final_state)
 		J1 = self.get_object_function_jerk()
 		J2 = self.get_object_function_time()
 		J3 = self.get_object_function_final_n_pos()
 		J4 = self.get_object_function_final_t_vel()
-
-		J = J1 + kt*J2 + kd*J3 + kv*J4
-
+		J = self.kj*J1 + self.kt*J2 + self.kd*J3 + self.kv*J4
 		return J
 	
 	# def get_object_function_jerk_gradient(self):
@@ -382,28 +255,29 @@ class PathPlanner:
 
 	# 	return J_x
 	
-	def get_object_function_gradient_numeric(self, x):
-		self.generate_path(x)
+	def get_object_function_gradient_numeric(self, final_state: Vector):
+		self.set_final_state(final_state)
+		T = self.final_time
+		posnT = self.final_lat_pos
+		veltT = self.final_long_vel
 
-		T, pen, vet = x
+		dT = 0.0001
+		dp = 0.0001
+		dv = 0.0001
 
-		dT   = 0.0001
-		dpen = 0.0001
-		dvet = 0.0001
-
-		J1u = planner.get_object_function_value(np.array([T + dT, pen, vet]))
-		J1d = planner.get_object_function_value(np.array([T - dT, pen, vet]))
-		J2u = planner.get_object_function_value(np.array([T, pen + dpen, vet]))
-		J2d = planner.get_object_function_value(np.array([T, pen - dpen, vet]))
-		J3u = planner.get_object_function_value(np.array([T, pen, vet + dvet]))
-		J3d = planner.get_object_function_value(np.array([T, pen, vet - dvet]))
+		J1u = planner.get_object_function_value(np.array([T + dT, posnT, veltT]))
+		J1d = planner.get_object_function_value(np.array([T - dT, posnT, veltT]))
+		J2u = planner.get_object_function_value(np.array([T, posnT + dp, veltT]))
+		J2d = planner.get_object_function_value(np.array([T, posnT - dp, veltT]))
+		J3u = planner.get_object_function_value(np.array([T, posnT, veltT + dv]))
+		J3d = planner.get_object_function_value(np.array([T, posnT, veltT - dv]))
 		
-		dJ_numeric = np.array([(J1u-J1d)/dT/2, (J2u-J2d)/dpen/2, (J3u-J3d)/dvet/2])
+		dJ_numeric = np.array([(J1u-J1d)/(2*dT), (J2u-J2d)/(2*dp), (J3u-J3d)/(2*dv)])
 
 		return dJ_numeric
 
 	# def get_constraint_function_1(self, t):
-	# 	p = self.get_x_y_pos(t)
+	# 	p = self.get_xy_pos(t)
 	# 	ret = self.road.get_projection(p)
 	# 	if ret is not None:
 	# 		c, dist = ret
@@ -413,13 +287,13 @@ class PathPlanner:
 	# 	return g1
 		
 	# def get_constraint_function_3(self, t):
-	# 	vt = self.get_x_y_vel(t)
+	# 	vt = self.get_xy_vel(t)
 	# 	vt2 = vt.norm**2
 	# 	g3 = vt2 - self.vmax**2
 	# 	return g3
 		
 	# def get_constraint_function_4(self, t):
-	# 	at = self.get_x_y_acc(t)
+	# 	at = self.get_xy_acc(t)
 	# 	at2 = at.norm**2
 	# 	g4 = at2 - self.amax**2
 	# 	return g4
@@ -431,79 +305,38 @@ class PathPlanner:
 	# 	return g5
 	
 	def get_constraint_function_value(self, t):
-		p = self.get_x_y_pos(t)
-		v = self.get_x_y_vel(t)
-		a = self.get_x_y_acc(t)
-		k = self.get_curvature(t)
-		ret = self.road.get_projection(p)
-		if ret is not None:
-			s, c, dist = ret
-			g1 = dist - self.dmax
-		else:
-			g1 = 0.
-		g2 = (v.x**2 + v.y**2) - self.vmax**2
-		g3 = (a.x**2 + a.y**2) - self.amax**2
-		g4 = k**2 - self.kmax**2
-		g = np.array([g1, g2, g3, g4])
+		pos = self.get_xy_pos(t)
+		vel = self.get_xy_vel(t)
+		acc = self.get_xy_acc(t)
+		kpa = self.get_curvature(t)
+		dist = self.road.get_projection_distance(pos)
+		g1 = dist - self.dmax
+		g2 = (vel.x**2 + vel.y**2) - self.vmax**2
+		g3 = (acc.x**2 + acc.y**2) - self.amax**2
+		g4 = kpa**2 - self.kmax**2
+		g = np.vstack([g1, g2, g3, g4]).transpose()
 		return g
 	
-	def get_constraint_function_max_value(self, x):
-		self.generate_path(x)
+	def get_constraint_function_max_value(self, final_state: Vector):
+		t1 = time.time()
+		self.set_final_state(final_state)
 		nt = 20
 
+		t2 = time.time()
 		ts = np.linspace(0, self.final_time, nt)
-		cs = []
-		for t in ts:
-			cs.append(self.get_constraint_function_value(t))
-		cs = np.array(cs)
-		max_values = np.max(cs, axis=0)
+		g = self.get_constraint_function_value(ts)
+		t3 = time.time()
+		max_values = np.max(g, axis=0)
+		t4 = time.time()
+		# print(f'get_constraint_function_max_value: 12={t2-t1:.2f} 23={t3-t2:.2f} 34={t4-t3:.2f}')
 		return max_values
 
 
-	# def get_constraint_function_max_1(self, nt):
-	# 	max_value = -np.inf
-	# 	for t in np.linspace(0, self.final_time, nt):
-	# 		value = self.get_constraint_function_1(t)
-	# 		max_value = max(value, max_value)
-	# 	return max_value
-		
-	# def get_constraint_function_max_3(self, nt):
-	# 	max_value = -np.inf
-	# 	for t in np.linspace(0, self.final_time, nt):
-	# 		value = self.get_constraint_function_3(t)
-	# 		max_value = max(value, max_value)
-	# 	return max_value
-		
-	# def get_constraint_function_max_4(self, nt):
-	# 	max_value = -np.inf
-	# 	for t in np.linspace(0, self.final_time, nt):
-	# 		value = self.get_constraint_function_4(t)
-	# 		max_value = max(value, max_value)
-	# 	return max_value
-		
-	# def get_constraint_function_max_5(self, nt):
-	# 	max_value = -np.inf
-	# 	for t in np.linspace(0, self.final_time, nt):
-	# 		value = self.get_constraint_function_5(t)
-	# 		max_value = max(value, max_value)
-	# 	return max_value
-	
-	# def get_constraint_function_max_value(self, x):
-	# 	self.generate_path(x)
-	# 	nt = 20
+	def get_constraint_function_jacobian_numeric(self, final_state: Vector):
+		t1 = time.time()
+		self.set_final_state(final_state)
 
-	# 	g_max = np.array([
-	# 		self.get_constraint_function_max_1(nt),
-	# 		self.get_constraint_function_max_3(nt),
-	# 		self.get_constraint_function_max_4(nt),
-	# 		self.get_constraint_function_max_5(nt),
-	# 	])
-	# 	return g_max
-		
-
-	def get_constraint_function_jacobian_numeric(self, x):
-		self.generate_path(x)
-
+		t2 = time.time()
 		T = self.final_time
 		pen = self.final_lat_pos
 		vet = self.final_long_vel
@@ -512,6 +345,7 @@ class PathPlanner:
 		dpen = 0.0001
 		dvet = 0.0001
 
+		t3 = time.time()
 		g1u = self.get_constraint_function_max_value(np.array([T + dT, pen, vet]))
 		g1d = self.get_constraint_function_max_value(np.array([T - dT, pen, vet]))
 		g2u = self.get_constraint_function_max_value(np.array([T, pen + dpen, vet]))
@@ -519,70 +353,63 @@ class PathPlanner:
 		g3u = self.get_constraint_function_max_value(np.array([T, pen, vet + dvet]))
 		g3d = self.get_constraint_function_max_value(np.array([T, pen, vet - dvet]))
 		dg = np.array([(g1u-g1d)/dT/2, (g2u-g2d)/dpen/2, (g3u-g3d)/dvet/2])
+		t4 = time.time()
+
+		# print(f'get_constraint_function_jacobian_numeric: 12={t2-t1:.2f} 23={t3-t2:.2f} 34={t4-t3:.2f}')
 
 		return dg
 	
-	def draw(self, axes, x, **kwargs):
-		self.generate_path(x)
+	def draw(self, axes, final_state, **kwargs):
+		self.set_final_state(final_state)
 
-		T, pen, vet = x
+		T, pen, vet = final_state
 		ts = np.linspace(0, T, 20)
 
 		new_ps = []
 		for t in ts:
-			pos = self.get_x_y_pos(t)
+			pos = self.get_xy_pos(t)[0]
 			new_ps.append(pos.numpy)
 		new_ps = np.array(new_ps)
 
-		axes.plot(new_ps[:,0], new_ps[:,1], **kwargs)
-		axes.plot(new_ps[0,0], new_ps[0,1], marker='^', **kwargs)
-		axes.plot(new_ps[-1,0], new_ps[-1,1], marker='o', **kwargs)
+		axes.plot(new_ps[:,0], new_ps[:,1], color='blue')
+		axes.plot(new_ps[-1,0], new_ps[-1,1], marker='^', color='green')
+		axes.plot(new_ps[0,0], new_ps[0,1], marker='o', color='red')
 		axes.grid(True)
 		plt.pause(0.01)
 
-	def plot_vel(self, axes, x):
-		self.generate_path(x)
-		T = x[0]
-		ts = np.linspace(0, T, 20)
+	def plot_vel(self, axes, final_state):
+		self.set_final_state(final_state)
+		ts = np.linspace(0, self.final_time, 20)
 
-		vel = self.get_x_y_vels(ts)
-		vel_mag = np.sqrt(vel[:,0]**2 + vel[:,1]**2)
+		vel = self.get_xy_vel(ts)
+		vel_mag = np.sqrt(vel.numpy[:,0]**2 + vel.numpy[:,1]**2)
 		
 		axes.plot(ts, vel_mag)
 		axes.grid(True)
 		axes.set_ylabel('Velocity [m/s]')
 		
-	def plot_acc(self, axes, x):
-		self.generate_path(x)
-		T = x[0]
-		ts = np.linspace(0, T, 20)
-
-		acc = self.get_x_y_accs(ts)
-		acc_mag = np.sqrt(acc[:,0]**2 + acc[:,1]**2)
-		
+	def plot_acc(self, axes, final_state):
+		self.set_final_state(final_state)
+		ts = np.linspace(0, self.final_time, 20)
+		acc = self.get_xy_acc(ts)
+		acc_mag = np.sqrt(acc.numpy[:,0]**2 + acc.numpy[:,1]**2)
 		axes.plot(ts, acc_mag)
 		axes.grid(True)
 		axes.set_ylabel('Acceleration [m/s^2]')
 		
-	def plot_jrk(self, axes, x):
-		self.generate_path(x)
-		T = x[0]
-		ts = np.linspace(0, T, 20)
-
-		jrk = self.get_x_y_jrks(ts)
-		jrk_mag = np.sqrt(jrk[:,0]**2 + jrk[:,1]**2)
-		
+	def plot_jrk(self, axes, final_state):
+		self.set_final_state(final_state)
+		ts = np.linspace(0, self.final_time, 20)
+		jrk = self.get_xy_jrk(ts)
+		jrk_mag = np.sqrt(jrk.numpy[:,0]**2 + jrk.numpy[:,1]**2)
 		axes.plot(ts, jrk_mag)
 		axes.grid(True)
 		axes.set_ylabel('Jerk [m/s^3]')
 		
-	def plot_kpa(self, axes, x):
-		self.generate_path(x)
-		T = x[0]
-		ts = np.linspace(0, T, 20)
-
-		kpa = self.get_curvatures(ts)
-
+	def plot_kpa(self, axes, final_state):
+		self.set_final_state(final_state)
+		ts = np.linspace(0, self.final_time, 20)
+		kpa = self.get_curvature(ts)
 		axes.plot(ts, kpa)
 		axes.grid(True)
 		axes.set_xlabel('Travel distance [m]')
@@ -618,18 +445,24 @@ class PathPlanner:
 
 		# create additional return values
 		status = CONVERGED
-		history = {'k': [k], 'x': [xk], 'd': [dk], 'fval': [fk], 'L': [Lk]}
+		# history = {'k': [k], 'x': [xk], 'd': [dk], 'fval': [fk], 'L': [Lk]}
 
 		# search loop
 		while (np.linalg.norm(dk) > epsilon): # stopping criteria 1
+			t1 = time.time()
 			xk_temp = xk
 			xk = xk - alpha * dk.reshape(xk.shape)
 			muk = vec_max_zero(muk + beta * g(xk_temp))
 			
+			t2 = time.time()
 			fk = f(xk)
+			t3 = time.time()
 			gk = g(xk)
+			t4 = time.time()
 			gradfk = gradf(xk)
+			t5 = time.time()
 			jacobgk = gradg(xk)
+			t6 = time.time()
 			Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
 			dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
@@ -637,44 +470,50 @@ class PathPlanner:
 
 			# store histories
 			if k//10*10 == k:
-				history['k'].append(k)
-				history['x'].append(xk)
-				history['d'].append(dk)
-				history['fval'].append(fk)
-				history['L'].append(Lk)
-				self.draw(axes[0], xk, **kwargs)
-				axes[1].scatter(k, fk, **kwargs)
-				axes[2].scatter(k, gk[0], **kwargs)
-				axes[3].scatter(k, gk[1], **kwargs)
-				axes[4].scatter(k, gk[2], **kwargs)
-				axes[5].scatter(k, gk[3], **kwargs)
-				plt.pause(0.01)
+				pass
+				# history['k'].append(k)
+				# history['x'].append(xk)
+				# history['d'].append(dk)
+				# history['fval'].append(fk)
+				# history['L'].append(Lk)
+				# self.draw(axes[0], xk, **kwargs)
+				# axes[1].scatter(k, fk, **kwargs)
+				# axes[2].scatter(k, gk[0], **kwargs)
+				# axes[3].scatter(k, gk[1], **kwargs)
+				# axes[4].scatter(k, gk[2], **kwargs)
+				# axes[5].scatter(k, gk[3], **kwargs)
+				# plt.pause(0.001)
 
 			# print the log message
-			if k//100*100 == k:
-				print(f'Lagrangian: {k}  {np.round(fk,2)}  {np.round(Lk,2)}  x={np.round(xk,2)}')
+			# if k//100*100 == k:
+			# 	print(f'Lagrangian: {k}  {np.round(fk,2)}  {np.round(gk,2)}  x={np.round(xk,2)}')
 
 			if k == max_num_iter: # stopping criteria 2
 				status = REACHED_MAX_ITER
-				print(f'Lagrangian: reached the maximum number of iteration: {k}')
+				# print(f'Lagrangian: reached the maximum number of iteration: {k}')
 				break
+			t7 = time.time()
+			# print(f'Time: 12={t2-t1:.2f} 23={t3-t2:.2f} 34={t4-t3:.2f} 45={t5-t4:.2f} 56={t6-t5:.2f} 67={t7-t6:.2f}')
 		
 		# solutions to return
 		x_opt = xk
 		fval_opt = fk
+		g_opt = gk
 
 		# convert to numpy array
-		history['k'] = np.array(history['k'])
-		history['x'] = np.array(history['x'])
-		history['d'] = np.array(history['d'])
-		history['fval'] = np.array(history['fval'])
-		history['L'] = np.array(history['L'])
+		# history['k'] = np.array(history['k'])
+		# history['x'] = np.array(history['x'])
+		# history['d'] = np.array(history['d'])
+		# history['fval'] = np.array(history['fval'])
+		# history['L'] = np.array(history['L'])
 
 		# calculate and add the rate of convergence to history
-		history['rate_conv'] = (history['fval'][1:] - fval_opt) / (history['fval'][:-1] - fval_opt)
-		history['rate_conv'] = np.insert(history['rate_conv'], 0, 1.) # insert 1 at 0-index to match its length with others
+		# history['rate_conv'] = (history['fval'][1:] - fval_opt) / (history['fval'][:-1] - fval_opt)
+		# history['rate_conv'] = np.insert(history['rate_conv'], 0, 1.) # insert 1 at 0-index to match its length with others
 
-		return x_opt, fval_opt, k, status, history
+		history = None
+
+		return x_opt, fval_opt, k, gk, status, history
 
 	def opt_search3(self, f, g, xmin, xmax, dx, axes, **kwargs):
 		[xss1, xss2, xss3] = np.meshgrid(
@@ -704,32 +543,33 @@ class PathPlanner:
 
 if __name__ == '__main__':
 	# way points
-	wx = [0.0, 20.0, 30, 50.0, 70]
+	wx = [0.0, 20.0, 30, 50.0, 150]
 	wy = [0.0, -6.0, 5.0, 6.5, 0.0]
-	hwidth = 3
+	hwidth = 6
 
-	road = Road(wx, wy, hwidth, ds=0.5)
+	road = Road(wx, wy, hwidth, ds=2)
 
 	vref = 10 # m/s
-	kt = 1e-2
-	kd = 10
-	kv = 1e-2
+	kj = 1
+	kt = 0.004
+	kd = 20
+	kv = 0.004
 
 	dmax = 2
 	vmax = 15 # m/s
 	amax = 9.81 # m/s^2
-	kmax = 0.1
+	kmax = 3
 	Ds = 30.
 
 	s0 = 0.
-	sf = s0 + Ds
+	sT = s0 + Ds
 
 	T0 = 3
 	pen0 = 0
 	vet0 = 10
 	x0 = np.array([T0, pen0, vet0])
 
-	planner = PathPlanner(road, vref, kt, kd, kv, dmax, vmax, amax, kmax)
+	planner = PathPlanner(road, vref, kj, kt, kd, kv, dmax, vmax, amax, kmax)
 
 	fig = plt.figure(1, figsize=(6,8))
 	plt.gcf().canvas.mpl_connect(
@@ -772,56 +612,28 @@ if __name__ == '__main__':
 	t = 0
 	Dt = 0.8
 
-	for _ in range(20):
-		planner.set_current_state(s0, sf, current_state)
-
-		# T = 12
-		# pen = 5
-		# vet = 27*kph
-		# x = np.array([T, pen, vet])
-
-		# J1 = planner.get_object_function_jerk()
-		# J2 = planner.get_object_function_time()
-		# J3 = planner.get_object_function_final_lat_pos()
-		# J4 = planner.get_object_function_final_long_vel()
-		# J = planner.get_object_function_value(x)
-
-		# print(f'{J=:6.4f} {J1=:6.4f} {J2=:6.4f} {J3=:6.4f} {J4=:6.4f}')
-
-		# # analytic differentiation
-		# dJ = planner.get_object_function_gradient(x)
-		# dJ_str = ' '.join([str(s).rjust(5) for s in np.round(dJ, 3)])
-		# print(f'{dJ_str}')
-
-		# dJ_numeric = planner.get_object_function_gradient_numeric(x)
-		# dJ_numeric_str = ' '.join([str(s).rjust(5) for s in np.round(dJ_numeric, 3)])
-		# print(f'{dJ_numeric_str}')
-
-		# g = planner.get_constraint_function_max_value(x)
-		# print(g)
-
-		# dg = planner.get_constraint_function_jacobian_numeric(x)
-		# print(dg)
-
+	for idx in range(20):
+		planner.set_travel_range(s0, sT)
+		planner.set_current_state(current_state)
 
 		f = planner.get_object_function_value
-		gradf = planner.get_object_function_gradient_numeric
 		g = planner.get_constraint_function_max_value
+		gradf = planner.get_object_function_gradient_numeric
 		gradg = planner.get_constraint_function_jacobian_numeric
 
 		start_time = time.time()
-		x_opt, fval_opt, k, status, history = planner.lagrangian(axes, f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=50, alpha=1e-4, beta=1e-3, color='blue')
+		x_opt, fval_opt, k, g_opt, status, history = planner.lagrangian(axes, f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=50, alpha=1e-4, beta=1e-3, color='blue')
 		# x_opt, fval_opt, k = planner.opt_search3(f, g, xmin=[1.5, -2, 6], xmax=[4.5, 2, 12], dx=[1, 0.5, 2], axes=axes, color='blue')
-		status=0
-		history = {'k': [0], 'x': [(0,0,0)], 'fval': [0], 'L': [0]}
+		# status = 0
+		# history = {'k': [0], 'x': [(0,0,0)], 'fval': [0], 'L': [0]}
 		end_time = time.time()
 
-		planner.generate_path(x_opt)
+		planner.set_final_state(x_opt)
 		t += Dt
 		
-		new_xy_pos = planner.get_x_y_pos(t=Dt)
-		new_xy_vel = planner.get_x_y_vel(t=Dt)
-		new_xy_acc = planner.get_x_y_acc(t=Dt)
+		new_xy_pos = planner.get_xy_pos(t=Dt)[0]
+		new_xy_vel = planner.get_xy_vel(t=Dt)[0]
+		new_xy_acc = planner.get_xy_acc(t=Dt)[0]
 
 		s0, c0, _ = planner.road.get_projection(new_xy_pos)
 		new_pos = planner.road.convert_xy2tn(s0, new_xy_pos - c0)
@@ -829,22 +641,19 @@ if __name__ == '__main__':
 		new_acc = planner.road.convert_xy2tn(s0, new_xy_acc)
 
 		current_state = VehicleState(new_pos, new_vel, new_acc)
-		print(t, current_state)
+		# print(t, current_state)
 
-		sf = s0 + Ds
-
+		sT = s0 + Ds
 		x0 = x_opt
 
+		planner.draw(axes[0], x_opt)
 
-		planner.draw(axes[0], x_opt, color='red')
+		print(f'Lagrangian: {idx=}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, g={np.round(g_opt,2)}, num_iter={k}, time={end_time - start_time:5.2f} sec')
 
-		print(f"Lagrangian: {status=}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, num_iter={k}")
-		print(f'Optimization time = {end_time - start_time:5.2f} sec')
-
-		ks = history['k']
-		xs = history['x']
-		fvals = history['fval']
-		Ls = history['L']
+		# ks = history['k']
+		# xs = history['x']
+		# fvals = history['fval']
+		# Ls = history['L']
 
 
 		# draw path
