@@ -1,11 +1,9 @@
-from quintic_polynomials import QuinticPolynomial2D
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
+from quintic_polynomials import QuinticPolynomial2D
 from road import Road
 from vector import *
-from vehicle_state import VehicleState
-from vector import Vector2D
 import time
 
 EPS = 1e-3
@@ -16,6 +14,32 @@ COLOR_END = '#008000'
 
 def vec_max_zero(x: np.ndarray):
 	return np.array([max(xi, 0) for xi in x])
+
+
+class VehicleState:
+    def __init__(self, pos=Vector2D(0,0), vel=Vector2D(0,1), acc=Vector2D(0,0)):
+        self._pos = pos
+        self._vel = vel
+        self._acc = acc
+    
+    @property
+    def pos(self):
+        return self._pos
+    
+    @property
+    def vel(self):
+        return self._vel
+    
+    @property
+    def acc(self):
+        return self._acc
+    
+    @property
+    def yaw(self):
+        return arctan2(self.vel.y, self.vel.x)
+    
+    def __repr__(self) -> str:
+        return f'VehicleState(pos={self.pos}, vel={self.vel}, acc={self.acc})'
 
 
 class PathPlanner:
