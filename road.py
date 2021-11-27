@@ -1,7 +1,9 @@
+from bisect import bisect
 import numpy as np
 import matplotlib.pyplot as plt
 from math import floor
 import typing
+import bisect
 
 from numpy.core.defchararray import center
 from vector import Vector2D
@@ -48,12 +50,41 @@ class Road(Spline2D):
 			yaws.append(self._calc_yaw(s))
 		return np.array(yaws)
 	
+	def _get_index(self, s):
+		return max(bisect.bisect(self.s_list, s) - 1, 0)
+
+	def get_center_point(self, s):
+		idx = self._get_index(s)
+		center = self.center_points[idx]
+		return Vector2D(*center)
+	
+	def get_yaw(self, s):
+		idx = self._get_index(s)
+		yaw = self.yaws[idx]
+		return yaw
+	
+	def convert_xy2tn(self, s, vxy: Vector2D):
+		idx = self._get_index(s)
+		yaw = self.yaws[idx]
+		vtn = vxy.rotated(-yaw)
+		return vtn
+	
+	def convert_tn2xy(self, s, vtn: Vector2D):
+		idx = self._get_index(s)
+		yaw = self.yaws[idx]
+		vxy = vtn.rotated(yaw)
+		return vxy
+	
 	def get_projection(self, p: Vector2D):
-		for center, yaw in zip(self.center_points, self.yaws):
-			v = p - Vector2D(*center)
-			if abs(abs(v.angle - yaw) - ANGLE90) < 3*DEGREE: # TODO
-				return Vector2D(*center), v.norm
-		return None
+		dmin = np.inf
+		imin = 0
+		for i, (s, center, yaw) in enumerate(zip(self.s_list, self.center_points, self.yaws)):
+			dist = (p - Vector2D(*center)).norm
+			if dist < dmin:
+				dmin = dist
+				imin = i
+			# if abs(abs(c2p.angle - yaw) - ANGLE90) < 5*DEGREE: # TODO
+		return self.s_list[imin], Vector2D(*self.center_points[imin]), dmin
 
 	def draw(self, axes, ds, dmax):
 		axes.plot(self.left_points[:,0], self.left_points[:,1], color='black')
@@ -78,15 +109,16 @@ if __name__ == '__main__':
 	axes.set_ylim(-15, 15)
 
 	road.draw(axes, ds=1, dmax=3)
-	Vector2D(70, -5).draw(axes, color='red', marker='o')
+	Vector2D(70, 5).draw(axes, color='red', marker='o')
 
-	p = Vector2D(10,-5)
-	p.draw(axes, color='red', marker='o')
-	ret = road.get_projection(p)
-	if ret is not None:
-		c, dist = ret
-		print(c, dist)
-		c.draw(axes, color='red', marker='o')
+	for x in np.arange(0,70,1):
+		p = Vector2D(x,-2)
+		p.draw(axes, color='green', marker='o')
+		ret = road.get_projection(p)
+		if ret is not None:
+			s, c, dist = ret
+			print(s, p, c, dist)
+			c.draw(axes, color='red', marker='o')
 	
 	plt.grid(True)
 	plt.gcf().canvas.mpl_connect(

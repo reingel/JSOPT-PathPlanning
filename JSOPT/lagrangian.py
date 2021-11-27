@@ -61,7 +61,7 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 
 	# create additional return values
 	status = CONVERGED
-	history = {'x': [xk], 'd': [dk], 'fval': [fk], 'L': [Lk]}
+	history = {'k': [k], 'x': [xk], 'd': [dk], 'fval': [fk], 'L': [Lk]}
 
 	# search loop
 	while (np.linalg.norm(dk) > epsilon): # stopping criteria 1
@@ -76,15 +76,20 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 		Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
 		dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
-		# store histories
-		history['x'].append(xk)
-		history['d'].append(dk)
-		history['fval'].append(fk)
-		history['L'].append(Lk)
-
 		k += 1
+
+		# store histories
+		if k//10*10 == k:
+			history['k'].append(k)
+			history['x'].append(xk)
+			history['d'].append(dk)
+			history['fval'].append(fk)
+			history['L'].append(Lk)
+
+		# print the log message
 		if k//100*100 == k:
 			print(f'Lagrangian: {k}  {fk=:5.2f}  {Lk=:5.2f}  x={np.round(xk,2)}')
+
 		if k == max_num_iter: # stopping criteria 2
 			status = REACHED_MAX_ITER
 			print(f'Lagrangian: reached the maximum number of iteration: {k}')
@@ -95,6 +100,7 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 	fval_opt = fk
 
 	# convert to numpy array
+	history['k'] = np.array(history['k'])
 	history['x'] = np.array(history['x'])
 	history['d'] = np.array(history['d'])
 	history['fval'] = np.array(history['fval'])
@@ -104,24 +110,96 @@ def lagrangian(f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e
 	history['rate_conv'] = (history['fval'][1:] - fval_opt) / (history['fval'][:-1] - fval_opt)
 	history['rate_conv'] = np.insert(history['rate_conv'], 0, 1.) # insert 1 at 0-index to match its length with others
 
-	return x_opt, fval_opt, status, history
+	return x_opt, fval_opt, k, status, history
 
+
+def opt_search2(f, g, xmin, xmax, dx):
+	[xss1, xss2] = np.meshgrid(
+		np.arange(xmin[0],xmax[0],dx[0]),
+		np.arange(xmin[1],xmax[1],dx[1]),
+		# np.arange(xmin[2],xmax[2],dx[2]),
+	)
+	fmin = np.inf
+	xopt = None
+	ni, nj = xss1.shape
+	for i in range(ni):
+		for j in range(nj):
+			x = np.array([xss1[i][j], xss2[i][j]])
+			if np.any(g(x) > 0):
+				continue
+			fx = f(x)
+			if fx < fmin:
+				fmin = fx
+				xopt = x
+	return xopt
+	
+def opt_search3(f, g, xmin, xmax, dx):
+	[xss1, xss2, xss3] = np.meshgrid(
+		np.arange(xmin[0],xmax[0],dx[0]),
+		np.arange(xmin[1],xmax[1],dx[1]),
+		np.arange(xmin[2],xmax[2],dx[2]),
+	)
+	fmin = np.inf
+	xopt = None
+	ni, nj, nk = xss1.shape
+	print(ni,nj,nk)
+	for i in range(ni):
+		for j in range(nj):
+			for k in range(nk):
+				x = np.array([xss1[i][j][k], xss2[i][j][k], xss3[i][j][k]])
+				if np.any(g(x) > 0):
+					continue
+				fx = f(x)
+				if fx < fmin:
+					fmin = fx
+					xopt = x
+		print(i,j,k)
+	return xopt, fmin, ni*nj*nk
+	
 
 # test code
 if __name__ == '__main__':
 	import matplotlib.pyplot as plt
 	
-	f = lambda x: x[0]**2 + 2*(x[1]-1)**2
-	gradf = lambda x: Vector([2*x[0], 4*(x[1]-1)])
+	f = lambda x: x[0]**2 + (x[1]-1)**2
+	gradf = lambda x: Vector([2*x[0], 2*(x[1]-1)])
 	
 	g = lambda x: 2*x[0] + 3 * x[1] + 5
 	gradg = lambda x: Vector([2, 3])
 	
 	x0 = Vector([-2, -1.4])
 
-	x_opt, fval_opt, status, history = lagrangian(f, gradf, g, gradg, x0, epsilon=1e-2, max_num_iter=500, alpha=1e-2, beta=1e-2)
+	# x_opt, fval_opt, k, status, history = lagrangian(f, gradf, g, gradg, x0, epsilon=1e-2, max_num_iter=500, alpha=1e-2, beta=1e-2)
 
-	print(f"Lagrangian: {status=}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, num_iter={len(history['x'])-1}")
+	# print(f"Lagrangian: {status=}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, num_iter={k}")
+
+	# fig, ax = plt.subplots(2,1)
+	# ax[0].set_aspect(1.0)
+	# ax[0].grid(True)
+	# x = np.linspace(-3,3,50)
+	# y = np.linspace(-3,2,40)
+	# [xx, yy] = np.meshgrid(x, y)
+	# zz = np.zeros_like(xx)
+	# for i in range(len(x)):
+	# 	for j in range(len(y)):
+	# 		zz[j,i] = f((x[i],y[j]))
+	# ax[0].contour(xx, yy, zz)
+	# ax[0].plot([-3,3],[1/3,-11/3])
+	# ax[0].scatter(history['x'][:,0], history['x'][:,1])
+	# ax[0].scatter(history['x'][0,0], history['x'][0,1], marker='^', color='green')
+	# ax[0].scatter(history['x'][-1,0], history['x'][-1,1], color='red')
+	# ax[1].grid(True)
+	# k = history['k']
+	# ax[1].plot(k, history['fval'], label='fval', marker='.')
+	# ax[1].plot(k, history['rate_conv'], label='rate_conv', marker='.')
+	# ax[1].legend(loc='best')
+	# plt.gcf().canvas.mpl_connect(
+	# 	'key_release_event',
+	# 	lambda event: [exit(0) if event.key == 'escape' else None])
+	# plt.show()
+
+	x_opt = opt_search2(f, g, xmin=[-2, -2], xmax=[2, 2], dx=[0.1, 0.1])
+	print(x_opt)
 
 	fig, ax = plt.subplots(2,1)
 	ax[0].set_aspect(1.0)
@@ -134,16 +212,11 @@ if __name__ == '__main__':
 		for j in range(len(y)):
 			zz[j,i] = f((x[i],y[j]))
 	ax[0].contour(xx, yy, zz)
-	ax[0].plot([-3,1/3],[3,-11/3])
-	ax[0].scatter(history['x'][:,0], history['x'][:,1])
-	ax[0].scatter(history['x'][0,0], history['x'][0,1], marker='^', color='green')
-	ax[0].scatter(history['x'][-1,0], history['x'][-1,1], color='red')
+	ax[0].plot([-3,3],[1/3,-11/3])
+	ax[0].scatter(x_opt[0], x_opt[1], color='red')
 	ax[1].grid(True)
-	# ax[1].plot(history['d'], label='d')
-	ax[1].plot(history['fval'], label='fval')
-	ax[1].plot(history['rate_conv'], label='rate_conv')
-	ax[1].legend(loc='best')
 	plt.gcf().canvas.mpl_connect(
 		'key_release_event',
 		lambda event: [exit(0) if event.key == 'escape' else None])
 	plt.show()
+

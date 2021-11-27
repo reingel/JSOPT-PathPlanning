@@ -33,6 +33,11 @@ class Vector2D:
 		l = np.hypot(self.x, self.y)
 		return Vector2D(self.x/l, self.y/l)
 	
+	def rotated(self, angle):
+		x = self.x * np.cos(angle) - self.y * np.sin(angle)
+		y = self.x * np.sin(angle) + self.y * np.cos(angle)
+		return Vector2D(x, y)
+	
 	def __repr__(self):
 		return f'Vector2D({self.x}, {self.y})'
 	

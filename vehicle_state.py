@@ -24,6 +24,9 @@ class VehicleState:
     @property
     def yaw(self):
         return arctan2(self.vel.y, self.vel.x)
+    
+    def __repr__(self) -> str:
+        return f'VehicleState(pos={self.pos}, vel={self.vel}, acc={self.acc})'
 
 
 if __name__ == '__main__':
