@@ -1,11 +1,6 @@
-from bisect import bisect
 import numpy as np
 import matplotlib.pyplot as plt
-from math import floor
-import typing
 import bisect
-
-from numpy.core.defchararray import center
 from vector import *
 from cubic_spline_planner import Spline2D
 
