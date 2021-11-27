@@ -1,4 +1,5 @@
 import sys
+from model_predictive_speed_and_steer_control import N_IND_SEARCH
 
 from quintic_polynomials import QuinticPolynomial, QuinticPolynomial2D
 sys.path.append('./JSOPT')
@@ -318,25 +319,14 @@ class PathPlanner:
 		return g
 	
 	def get_constraint_function_max_value(self, final_state: Vector):
-		t1 = time.time()
-		self.set_final_state(final_state)
 		nt = 20
-
-		t2 = time.time()
 		ts = np.linspace(0, self.final_time, nt)
 		g = self.get_constraint_function_value(ts)
-		t3 = time.time()
 		max_values = np.max(g, axis=0)
-		t4 = time.time()
-		# print(f'get_constraint_function_max_value: 12={t2-t1:.2f} 23={t3-t2:.2f} 34={t4-t3:.2f}')
 		return max_values
 
 
 	def get_constraint_function_jacobian_numeric(self, final_state: Vector):
-		t1 = time.time()
-		self.set_final_state(final_state)
-
-		t2 = time.time()
 		T = self.final_time
 		pen = self.final_lat_pos
 		vet = self.final_long_vel
@@ -345,7 +335,6 @@ class PathPlanner:
 		dpen = 0.0001
 		dvet = 0.0001
 
-		t3 = time.time()
 		g1u = self.get_constraint_function_max_value(np.array([T + dT, pen, vet]))
 		g1d = self.get_constraint_function_max_value(np.array([T - dT, pen, vet]))
 		g2u = self.get_constraint_function_max_value(np.array([T, pen + dpen, vet]))
@@ -353,9 +342,6 @@ class PathPlanner:
 		g3u = self.get_constraint_function_max_value(np.array([T, pen, vet + dvet]))
 		g3d = self.get_constraint_function_max_value(np.array([T, pen, vet - dvet]))
 		dg = np.array([(g1u-g1d)/dT/2, (g2u-g2d)/dpen/2, (g3u-g3d)/dvet/2])
-		t4 = time.time()
-
-		# print(f'get_constraint_function_jacobian_numeric: 12={t2-t1:.2f} 23={t3-t2:.2f} 34={t4-t3:.2f}')
 
 		return dg
 	
@@ -415,18 +401,12 @@ class PathPlanner:
 		axes.set_xlabel('Travel distance [m]')
 		axes.set_ylabel('Curvature [1/m]')
 		
-	def lagrangian(self, axes, f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e-3, beta=1e-3, **kwargs):
+	def lagrangian(self, f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e-3, beta=1e-3, **kwargs):
 		# no. of design variables
-		try:
-			N = len(x0)
-		except:
-			N = 1
+		N = len(x0)
 
 		# no. of inequality constraints
-		try:
-			M = len(g(x0))
-		except:
-			M = 1
+		M = len(g(x0))
 
 		# Lagrangian multiplier
 		mu0 = np.zeros(M)
@@ -440,137 +420,88 @@ class PathPlanner:
 		gk = g(xk)
 		gradfk = gradf(xk)
 		jacobgk = gradg(xk)
-		Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
+		# Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
 		dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
 		# create additional return values
 		status = CONVERGED
-		# history = {'k': [k], 'x': [xk], 'd': [dk], 'fval': [fk], 'L': [Lk]}
 
 		# search loop
 		while (np.linalg.norm(dk) > epsilon): # stopping criteria 1
-			t1 = time.time()
 			xk_temp = xk
 			xk = xk - alpha * dk.reshape(xk.shape)
 			muk = vec_max_zero(muk + beta * g(xk_temp))
 			
-			t2 = time.time()
 			fk = f(xk)
-			t3 = time.time()
 			gk = g(xk)
-			t4 = time.time()
 			gradfk = gradf(xk)
-			t5 = time.time()
 			jacobgk = gradg(xk)
-			t6 = time.time()
-			Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
+			# Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
 			dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
 			k += 1
-
-			# store histories
-			if k//10*10 == k:
-				pass
-				# history['k'].append(k)
-				# history['x'].append(xk)
-				# history['d'].append(dk)
-				# history['fval'].append(fk)
-				# history['L'].append(Lk)
-				# self.draw(axes[0], xk, **kwargs)
-				# axes[1].scatter(k, fk, **kwargs)
-				# axes[2].scatter(k, gk[0], **kwargs)
-				# axes[3].scatter(k, gk[1], **kwargs)
-				# axes[4].scatter(k, gk[2], **kwargs)
-				# axes[5].scatter(k, gk[3], **kwargs)
-				# plt.pause(0.001)
-
-			# print the log message
-			# if k//100*100 == k:
-			# 	print(f'Lagrangian: {k}  {np.round(fk,2)}  {np.round(gk,2)}  x={np.round(xk,2)}')
-
 			if k == max_num_iter: # stopping criteria 2
 				status = REACHED_MAX_ITER
-				# print(f'Lagrangian: reached the maximum number of iteration: {k}')
 				break
-			t7 = time.time()
-			# print(f'Time: 12={t2-t1:.2f} 23={t3-t2:.2f} 34={t4-t3:.2f} 45={t5-t4:.2f} 56={t6-t5:.2f} 67={t7-t6:.2f}')
 		
 		# solutions to return
 		x_opt = xk
 		fval_opt = fk
 		g_opt = gk
 
-		# convert to numpy array
-		# history['k'] = np.array(history['k'])
-		# history['x'] = np.array(history['x'])
-		# history['d'] = np.array(history['d'])
-		# history['fval'] = np.array(history['fval'])
-		# history['L'] = np.array(history['L'])
+		return x_opt, fval_opt, k, g_opt, status
 
-		# calculate and add the rate of convergence to history
-		# history['rate_conv'] = (history['fval'][1:] - fval_opt) / (history['fval'][:-1] - fval_opt)
-		# history['rate_conv'] = np.insert(history['rate_conv'], 0, 1.) # insert 1 at 0-index to match its length with others
-
-		history = None
-
-		return x_opt, fval_opt, k, gk, status, history
-
-	def opt_search3(self, f, g, xmin, xmax, dx, axes, **kwargs):
+	def opt_search3(self, f, g, xmin, xmax, dx, **kwargs):
 		[xss1, xss2, xss3] = np.meshgrid(
 			np.arange(xmin[0],xmax[0],dx[0]),
 			np.arange(xmin[1],xmax[1],dx[1]),
 			np.arange(xmin[2],xmax[2],dx[2]),
 		)
-		fmin = np.inf
-		xopt = None
+		fval_opt = np.inf
+		x_opt = None
 		ni, nj, nk = xss1.shape
+		k = ni*nj*nk
 
 		for i in range(ni):
 			for j in range(nj):
 				for k in range(nk):
 					x = np.array([xss1[i][j][k], xss2[i][j][k], xss3[i][j][k]])
-					# plt.clf()
-					self.draw(axes, x, **kwargs)
 					if np.any(g(x) > 0):
 						continue
 					fx = f(x)
-					if fx < fmin:
-						fmin = fx
-						xopt = x
+					if fx < fval_opt:
+						fval_opt = fx
+						x_opt = x
 
-		return xopt, fmin, ni*nj*nk
+		return x_opt, fval_opt, k
 	
 
 if __name__ == '__main__':
-	# way points
+	# parameters for simulation
+	N_SIMULATION = 20 # number of simulation loops
+	Ds = 30. # preview distance
+	Dt = 0.8 # stepping time
+
+	# Create road model
 	wx = [0.0, 20.0, 30, 50.0, 150]
 	wy = [0.0, -6.0, 5.0, 6.5, 0.0]
-	hwidth = 6
+	hwidth = 6 # half width of road
+	ds = 4 # step size along the center line
+	road = Road(wx, wy, hwidth, ds=4)
 
-	road = Road(wx, wy, hwidth, ds=2)
-
-	vref = 10 # m/s
-	kj = 1
-	kt = 0.004
-	kd = 20
-	kv = 0.004
-
-	dmax = 2
-	vmax = 15 # m/s
-	amax = 9.81 # m/s^2
-	kmax = 3
-	Ds = 30.
-
-	s0 = 0.
-	sT = s0 + Ds
-
-	T0 = 3
-	pen0 = 0
-	vet0 = 10
-	x0 = np.array([T0, pen0, vet0])
-
+	# Create path planner
+	vref = 10 # [m/s] vehicle target speed
+	kj = 1 # weight for jerk object function (J1)
+	kt = 0.004 # weight for time object function (J2)
+	kd = 20 # weight for distance object function (J3)
+	kv = 0.004 # weight for velocity object funciton (J4)
+	dmax = 2 # max. distance from center line
+	vmax = 15 # [m/s] max. velocity of vehicle
+	amax = 9.81 # [m/s^2] max. acceleration of vehicle
+	kmax = 3 # [1/m] max. curvature of path
 	planner = PathPlanner(road, vref, kj, kt, kd, kv, dmax, vmax, amax, kmax)
 
+	# Open a figure window for animation and plot
 	fig = plt.figure(1, figsize=(6,8))
 	plt.gcf().canvas.mpl_connect(
 		'key_release_event',
@@ -589,115 +520,81 @@ if __name__ == '__main__':
 	axes[0].set_xlim(-5, 75)
 	axes[0].set_ylim(-15, 15)
 	axes[1].set_ylabel('f')
-	axes[2].set_ylabel('g1-dmax')
-	axes[3].set_ylabel('g2-vmax')
-	axes[4].set_ylabel('g3-amax')
-	axes[5].set_ylabel('g4-kmax')
-	planner.road.draw(axes[0], ds=1, dmax=dmax)
-
-	# ax1 = fig.add_subplot(521)
+	axes[2].set_ylabel('g_1 (dmax)')
+	axes[3].set_ylabel('g_2 (vmax)')
+	axes[4].set_ylabel('g_3 (amax)')
+	axes[5].set_ylabel('g_4 (kmax)')
 	ax2 = fig.add_subplot(527)
 	ax3 = fig.add_subplot(528)
 	ax4 = fig.add_subplot(529)
 	ax5 = fig.add_subplot(5,2,10)
-	# ax1.grid(True)
 	ax2.grid(True)
 	ax3.grid(True)
 	ax4.grid(True)
 	ax5.grid(True)
 
+	# draw road
+	planner.road.draw(axes[0], ds=1, dmax=dmax)
 
-	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(20/3.6,0), acc=Vector2D(0,0))
+	# initial travel range along the center line
+	s0 = 0.
+	sT = s0 + Ds
 
+	# initial current vehicle states
+	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(6,0), acc=Vector2D(0,0))
+
+	# initial values of design variables
+	T = 3 # travel time
+	pnT = 0 # lateral position at T
+	vtT = 10 # longitudinal velocity at T
+	x0 = np.array([T, pnT, vtT]) # final state = design variables
+
+	# set travel range, current and final state
+	planner.set_travel_range(s0, sT)
+	planner.set_current_state(current_state)
+	planner.set_final_state(x0)
+
+	# initialize time
 	t = 0
-	Dt = 0.8
 
-	for idx in range(20):
-		planner.set_travel_range(s0, sT)
-		planner.set_current_state(current_state)
-
+	# optimization loop
+	for idx in range(N_SIMULATION):
 		f = planner.get_object_function_value
 		g = planner.get_constraint_function_max_value
 		gradf = planner.get_object_function_gradient_numeric
 		gradg = planner.get_constraint_function_jacobian_numeric
 
 		start_time = time.time()
-		x_opt, fval_opt, k, g_opt, status, history = planner.lagrangian(axes, f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=50, alpha=1e-4, beta=1e-3, color='blue')
-		# x_opt, fval_opt, k = planner.opt_search3(f, g, xmin=[1.5, -2, 6], xmax=[4.5, 2, 12], dx=[1, 0.5, 2], axes=axes, color='blue')
-		# status = 0
-		# history = {'k': [0], 'x': [(0,0,0)], 'fval': [0], 'L': [0]}
+		x_opt, fval_opt, k, g_opt, status = planner.lagrangian(f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=50, alpha=1e-4, beta=1e-3, color='blue')
+		# x_opt, fval_opt, k = planner.opt_search3(f, g, xmin=[1.5, -2, 6], xmax=[4.5, 2, 12], dx=[1, 0.5, 2])
 		end_time = time.time()
 
-		planner.set_final_state(x_opt)
-		t += Dt
-		
-		new_xy_pos = planner.get_xy_pos(t=Dt)[0]
-		new_xy_vel = planner.get_xy_vel(t=Dt)[0]
-		new_xy_acc = planner.get_xy_acc(t=Dt)[0]
+		# pring log message
+		print(f'Lagrangian: idx={idx+1}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, g={np.round(g_opt,2)}, num_iter={k}, time={end_time - start_time:5.2f} sec')
 
-		s0, c0, _ = planner.road.get_projection(new_xy_pos)
-		new_pos = planner.road.convert_xy2tn(s0, new_xy_pos - c0)
-		new_vel = planner.road.convert_xy2tn(s0, new_xy_vel)
-		new_acc = planner.road.convert_xy2tn(s0, new_xy_acc)
-
-		current_state = VehicleState(new_pos, new_vel, new_acc)
-		# print(t, current_state)
-
-		sT = s0 + Ds
-		x0 = x_opt
-
+		# draw the optimal path and plot signals
 		planner.draw(axes[0], x_opt)
-
-		print(f'Lagrangian: {idx=}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, g={np.round(g_opt,2)}, num_iter={k}, time={end_time - start_time:5.2f} sec')
-
-		# ks = history['k']
-		# xs = history['x']
-		# fvals = history['fval']
-		# Ls = history['L']
-
-
-		# draw path
-		# ax1.set_aspect(1)
-		# ax1.set_xlim(-5, 75)
-		# ax1.set_ylim(-15, 15)
-
-		# road.draw(ax1, ds=1, dmax=dmax)
-		# planner.draw(ax1, x_opt)
 		planner.plot_vel(ax2, x_opt)
 		planner.plot_acc(ax3, x_opt)
 		planner.plot_jrk(ax4, x_opt)
 		planner.plot_kpa(ax5, x_opt)
-		
-		# ax6 = fig.add_subplot(916)
-		# ax7 = fig.add_subplot(917)
-		# ax8 = fig.add_subplot(918)
-		# ax9 = fig.add_subplot(919)
-		# ax6.grid(True)
-		# ax7.grid(True)
-		# ax8.grid(True)
-		# ax9.grid(True)
-
-		# kss = [ks[0], ks[-1]]
-		# xss = [xs[0], xs[-1]]
-		# for i, k in enumerate(kss):
-		# 	x = xss[i]
-		# 	planner.generate_path(x)
-		# 	T, pen, vet = x
-		# 	ts = np.linspace(0,T,20)
-		# 	color = 'blue' if i == 0 else 'red'
-		# 	c1 = []
-		# 	c3 = []
-		# 	c4 = []
-		# 	c5 = []
-		# 	for t in ts:
-		# 		c1.append(planner.get_constraint_function_1(t))
-		# 		c3.append(planner.get_constraint_function_3(t))
-		# 		c4.append(planner.get_constraint_function_4(t))
-		# 		c5.append(planner.get_constraint_function_5(t))
-		# 	ax6.scatter(ts, c1, color=color)
-		# 	ax7.scatter(ts, c3, color=color)
-		# 	ax8.scatter(ts, c4, color=color)
-		# 	ax9.scatter(ts, c5, color=color)
-
 		plt.pause(0.01)
+
+		# use the optimal solution as the next initial value
+		x0 = x_opt
+		
+		# calculate the one-step-ahead position and set it as the current state
+		t += Dt
+		next_xy_pos = planner.get_xy_pos(Dt)[0]
+		next_xy_vel = planner.get_xy_vel(Dt)[0]
+		next_xy_acc = planner.get_xy_acc(Dt)[0]
+		s0, pos0 = planner.road.get_projection_point(next_xy_pos)
+		sT = s0 + Ds
+		next_tn_pos = planner.road.convert_xy2tn(s0, next_xy_pos - pos0)
+		next_tn_vel = planner.road.convert_xy2tn(s0, next_xy_vel)
+		next_tn_acc = planner.road.convert_xy2tn(s0, next_xy_acc)
+		current_state = VehicleState(next_tn_pos, next_tn_vel, next_tn_acc)
+		planner.set_travel_range(s0, sT)
+		planner.set_current_state(current_state)
+
 	plt.show()

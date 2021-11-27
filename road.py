@@ -81,15 +81,11 @@ class Road(Spline2D):
 		dist = np.sqrt(np.min((column_vector(p.x) - row_vector(center_x))**2 + (column_vector(p.y) - row_vector(center_y))**2, axis=1))
 		return dist
 	
-	def get_projection(self, p: Vector2D):
-		dmin = np.inf
-		imin = 0
-		for i, (s, center, yaw) in enumerate(zip(self.s_list, self.center_points, self.yaws)):
-			dist = (p - Vector2D(*center)).norm
-			if dist < dmin:
-				dmin = dist
-				imin = i
-		return self.s_list[imin], Vector2D(*self.center_points[imin]), dmin
+	def get_projection_point(self, p: Vector2D):
+		center_x = self.center_points[:,0]
+		center_y = self.center_points[:,1]
+		imin = np.argmin((column_vector(p.x) - row_vector(center_x))**2 + (column_vector(p.y) - row_vector(center_y))**2, axis=1)
+		return self.s_list[imin], Vector2D(*self.center_points[imin][0])
 
 	def draw(self, axes, ds, dmax):
 		axes.plot(self.left_points[:,0], self.left_points[:,1], color='black')
