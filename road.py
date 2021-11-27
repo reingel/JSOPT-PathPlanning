@@ -15,6 +15,7 @@ class Road(Spline2D):
 		self.s_list = np.arange(0, self.smax, ds)
 		self.center_points = self._calc_center_points(ds)
 		self.yaws = self._calc_yaws(ds)
+		self.curvatures = self._calc_curvatures(ds)
 		yaw_p90 = self.yaws + ANGLE90
 		yaw_m90 = self.yaws - ANGLE90
 		self.left_points = self.center_points + hwidth * np.column_stack([np.cos(yaw_p90), np.sin(yaw_p90)])
@@ -44,6 +45,15 @@ class Road(Spline2D):
 		for s in self.s_list:
 			yaws.append(self._calc_yaw(s))
 		return np.array(yaws)
+	
+	def _calc_curvature(self, s):
+		return self.calc_curvature(s)
+	
+	def _calc_curvatures(self, ds):
+		curvatures = []
+		for s in self.s_list:
+			curvatures.append(self._calc_curvature(s))
+		return np.array(curvatures)
 	
 	def _get_index(self, s):
 		return max(bisect.bisect(self.s_list, s) - 1, 0)
@@ -98,6 +108,7 @@ if __name__ == '__main__':
 
 	print(road.smax)
 	print(road.s_list)
+	print(np.round(road.curvatures, 2))
 
 	fig, axes = plt.subplots()
 	axes.set_aspect(1)
