@@ -1,24 +1,18 @@
-import sys
-from model_predictive_speed_and_steer_control import N_IND_SEARCH
-
-from quintic_polynomials import QuinticPolynomial, QuinticPolynomial2D
-sys.path.append('./JSOPT')
-
-from typing import final
+from quintic_polynomials import QuinticPolynomial2D
 import numpy as np
 import matplotlib.pyplot as plt
-from numpy.core.einsumfunc import _parse_possible_contraction
+from matplotlib import gridspec
 from road import Road
 from vector import *
 from vehicle_state import VehicleState
 from vector import Vector2D
-from JSOPT.lagrangian import lagrangian
 import time
-from JSOPT.constant import *
-from JSOPT.linalg import Vector, normalized
-from JSOPT.line_search import bisection
 
 EPS = 1e-3
+COLOR_LINE = '#8080FF'
+COLOR_START = '#FF0000'
+COLOR_END = '#008000'
+
 
 def vec_max_zero(x: np.ndarray):
 	return np.array([max(xi, 0) for xi in x])
@@ -136,126 +130,6 @@ class PathPlanner:
 		J = self.kj*J1 + self.kt*J2 + self.kd*J3 + self.kv*J4
 		return J
 	
-	# def get_object_function_jerk_gradient(self):
-	# 	# current and final states
-	# 	T = self.final_time
-
-	# 	psn = self.current_state.pos.y
-
-	# 	vsn = self.current_state.vel.y
-	# 	vst = self.current_state.vel.x
-
-	# 	asn = self.current_state.acc.y
-	# 	ast = self.current_state.acc.x
-
-	# 	pen = self.final_lat_pos
-		
-	# 	ven = 0.
-	# 	vet = self.final_long_vel
-
-	# 	aen = 0.
-	# 	aet = 0.
-
-	# 	# coefficients of lateral(normal) polynomial
-	# 	dpn = pen - psn - vsn*T - 1/2*asn*T**2
-	# 	dvn = ven - vsn - asn*T
-	# 	dan = aen - asn
-
-	# 	an3_num =  10*dpn - 4*T*dvn + 1/2*T**2*dan
-	# 	an4_num = -15*dpn + 7*T*dvn -     T**2*dan
-	# 	an5_num =   6*dpn - 3*T*dvn + 1/2*T**2*dan
-	# 	an3 = an3_num / T**3
-	# 	an4 = an4_num / T**4
-	# 	an5 = an5_num / T**5
-
-	# 	# coefficients of longitudinal(tangent) polynomial
-	# 	dvt = vet - vst - ast*T
-	# 	dat = aet - ast
-
-	# 	at3_num =      dvt - 1/3*T*dat
-	# 	at4_num = -1/2*dvt + 1/4*T*dat
-	# 	at3 = at3_num / T**2
-	# 	at4 = at4_num / T**3
-
-	# 	# gradients of coefficients of lateral(normal) polynomial
-	# 	dpn_T   = -vsn - asn*T
-	# 	dpn_pen = 1
-
-	# 	dvn_T   = -asn
-	# 	dvn_pen = 0
-
-	# 	dan_T   = 0
-	# 	dan_pen = 0
-
-	# 	an3_T   = (( 10*dpn_T   - 4*dvn - 4*T*dvn_T   +   T*dan + 1/2*T**2*dan_T  ) * T - an3_num * 3) / T**4
-	# 	an3_pen =  ( 10*dpn_pen -         4*T*dvn_pen +           1/2*T**2*dan_pen)                    / T**3
-
-	# 	an4_T   = ((-15*dpn_T   + 7*dvn + 7*T*dvn_T   - 2*T*dan -     T**2*dan_T  ) * T - an4_num * 4) / T**5
-	# 	an4_pen =  (-15*dpn_pen +         7*T*dvn_pen -               T**2*dan_pen)                    / T**4
-
-	# 	an5_T   = ((  6*dpn_T   - 3*dvn - 3*T*dvn_T   +   T*dan + 1/2*T**2*dan_T  ) * T - an5_num * 5) / T**6
-	# 	an5_pen =  (  6*dpn_pen -         3*T*dvn_pen +           1/2*T**2*dan_pen)                    / T**5
-
-	# 	# gradients of coefficients of longitudinal(tangent) polynomial
-	# 	dvt_T   = -ast
-	# 	dvt_vet = 1
-
-	# 	dat_T   = 0
-	# 	dat_vet = 0
-
-	# 	at3_T   = ((     dvt_T   - 1/3*dat - 1/3*T*dat_T  ) * T - at3_num * 2) / T**3
-	# 	at3_vet =  (     dvt_vet -           1/3*T*dat_vet)                    / T**4
-	
-	# 	at4_T   = ((-1/2*dvt_T   + 1/4*dat + 1/4*T*dat_T  ) * T - at4_num * 2) / T**3
-	# 	at4_vet =  (-1/2*dvt_vet +           1/4*T*dat_vet)                    / T**4
-
-	# 	# gradient of object function of jerk
-	# 	J1_T = 720*(2*an5*an5_T*T**5 + 5*an5**2*T**4) \
-	# 		+ 720*(an4_T*an5*T**4 + an4*an5_T*T**4 + 4*an4*an5*T**3) \
-	# 		+ (192*2*an4*an4_T + 240*(an3_T*an5 + an3*an5_T) + 192*2*at4*at4_T)*T**3 \
-	# 		+ 3*(192*an4**2 + 240*an3*an5 + 192*at4**2)*T**2 \
-	# 		+ 144*(an3_T*an4 + an3*an4_T + at3_T*at4 + at3*at4_T)*T**2 \
-	# 		+ 144*2*(an3*an4 + at3*at4)*T \
-	# 		+ 36*(2*an3*an3_T + 2*at3*at3_T)*T \
-	# 		+ 36*(an3**2 + at3**2)
-		
-	# 	J1_pen = 720*2*an5*an5_pen*T**5 + 720*(an4_pen*an5 + an4*an5_pen)*T**4 \
-	# 		+ (192*2*an4*an4_pen + 240*(an3_pen*an5 + an3*an5_pen))*T**3 \
-	# 		+ 144*(an3_pen*an4 + an3*an4_pen)*T**2 + 36*2*an3*an3_pen*T
-		
-	# 	J1_vet = 192*2*at4*at4_vet*T**3 + 144*(at3_vet*at4 + at3*at4_vet)*T**2 \
-	# 		+ 36*2*at3*at3_vet*T
-		
-	# 	J1_x = np.array([J1_T, J1_pen, J1_vet])
-
-	# 	return J1_x
-
-	# def get_object_function_time_gradient(self):
-	# 	J2_x = np.array([1, 0, 0])
-	# 	return J2_x
-	
-	# def get_object_function_final_lat_pos_gradient(self):
-	# 	pen = self.final_lat_pos
-	# 	J3_x = np.array([0, 2*pen, 0])
-	# 	return J3_x
-	
-	# def get_object_function_final_long_vel_gradient(self):
-	# 	vet = self.final_long_vel
-	# 	J4_x = np.array([0, 0, 2*(vet - self.ref_vel)])
-	# 	return J4_x
-	
-	# def get_object_function_gradient(self, x):
-	# 	self.generate_path(x)
-
-	# 	J1_x = self.get_object_function_jerk_gradient()
-	# 	J2_x = self.get_object_function_time_gradient()
-	# 	J3_x = self.get_object_function_final_lat_pos_gradient()
-	# 	J4_x = self.get_object_function_final_long_vel_gradient()
-
-	# 	J_x = J1_x + kt*J2_x + kd*J3_x + kv*J4_x
-
-	# 	return J_x
-	
 	def get_object_function_gradient_numeric(self, final_state: Vector):
 		self.set_final_state(final_state)
 		T = self.final_time
@@ -277,34 +151,6 @@ class PathPlanner:
 
 		return dJ_numeric
 
-	# def get_constraint_function_1(self, t):
-	# 	p = self.get_xy_pos(t)
-	# 	ret = self.road.get_projection(p)
-	# 	if ret is not None:
-	# 		c, dist = ret
-	# 		g1 = dist - self.dmax
-	# 	else:
-	# 		g1 = 0.
-	# 	return g1
-		
-	# def get_constraint_function_3(self, t):
-	# 	vt = self.get_xy_vel(t)
-	# 	vt2 = vt.norm**2
-	# 	g3 = vt2 - self.vmax**2
-	# 	return g3
-		
-	# def get_constraint_function_4(self, t):
-	# 	at = self.get_xy_acc(t)
-	# 	at2 = at.norm**2
-	# 	g4 = at2 - self.amax**2
-	# 	return g4
-		
-	# def get_constraint_function_5(self, t):
-	# 	kt = self.get_curvature(t)
-	# 	kt2 = kt**2
-	# 	g5 = kt2 - self.kmax**2
-	# 	return g5
-	
 	def get_constraint_function_value(self, t):
 		pos = self.get_xy_pos(t)
 		vel = self.get_xy_vel(t)
@@ -319,6 +165,7 @@ class PathPlanner:
 		return g
 	
 	def get_constraint_function_max_value(self, final_state: Vector):
+		self.set_final_state(final_state)
 		nt = 20
 		ts = np.linspace(0, self.final_time, nt)
 		g = self.get_constraint_function_value(ts)
@@ -327,6 +174,7 @@ class PathPlanner:
 
 
 	def get_constraint_function_jacobian_numeric(self, final_state: Vector):
+		self.set_final_state(final_state)
 		T = self.final_time
 		pen = self.final_lat_pos
 		vet = self.final_long_vel
@@ -345,7 +193,7 @@ class PathPlanner:
 
 		return dg
 	
-	def draw(self, axes, final_state, **kwargs):
+	def draw_path(self, axes, final_state, **kwargs):
 		self.set_final_state(final_state)
 
 		T, pen, vet = final_state
@@ -357,65 +205,58 @@ class PathPlanner:
 			new_ps.append(pos.numpy)
 		new_ps = np.array(new_ps)
 
-		axes.plot(new_ps[:,0], new_ps[:,1], color='blue')
-		axes.plot(new_ps[-1,0], new_ps[-1,1], marker='^', color='green')
-		axes.plot(new_ps[0,0], new_ps[0,1], marker='o', color='red')
+		axes.plot(new_ps[:,0], new_ps[:,1], color=COLOR_LINE)
+		axes.plot(new_ps[-1,0], new_ps[-1,1], marker='^', color=COLOR_END)
+		axes.plot(new_ps[0,0], new_ps[0,1], marker='o', color=COLOR_START)
 		axes.grid(True)
 		plt.pause(0.01)
 
-	def plot_vel(self, axes, final_state):
+	def plot_vel(self, axes, t, final_state):
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
-
 		vel = self.get_xy_vel(ts)
 		vel_mag = np.sqrt(vel.numpy[:,0]**2 + vel.numpy[:,1]**2)
+		axes.plot(t + ts, vel_mag, color=COLOR_LINE)
+		axes.plot(t + ts[0], vel_mag[0], color=COLOR_START, marker='o')
+		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
-		axes.plot(ts, vel_mag)
-		axes.grid(True)
-		axes.set_ylabel('Velocity [m/s]')
-		
-	def plot_acc(self, axes, final_state):
+	def plot_acc(self, axes, t, final_state):
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		acc = self.get_xy_acc(ts)
 		acc_mag = np.sqrt(acc.numpy[:,0]**2 + acc.numpy[:,1]**2)
-		axes.plot(ts, acc_mag)
-		axes.grid(True)
-		axes.set_ylabel('Acceleration [m/s^2]')
+		axes.plot(t + ts, acc_mag, color=COLOR_LINE)
+		axes.plot(t + ts[0], acc_mag[0], color=COLOR_START, marker='o')
+		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
-	def plot_jrk(self, axes, final_state):
+	def plot_jrk(self, axes, t, final_state):
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		jrk = self.get_xy_jrk(ts)
 		jrk_mag = np.sqrt(jrk.numpy[:,0]**2 + jrk.numpy[:,1]**2)
-		axes.plot(ts, jrk_mag)
-		axes.grid(True)
-		axes.set_ylabel('Jerk [m/s^3]')
+		axes.plot(t + ts, jrk_mag, color=COLOR_LINE)
+		axes.plot(t + ts[0], jrk_mag[0], color=COLOR_START, marker='o')
+		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
-	def plot_kpa(self, axes, final_state):
+	def plot_kpa(self, axes, t, final_state):
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		kpa = self.get_curvature(ts)
-		axes.plot(ts, kpa)
-		axes.grid(True)
-		axes.set_xlabel('Travel distance [m]')
-		axes.set_ylabel('Curvature [1/m]')
+		axes.plot(t + ts, kpa, color=COLOR_LINE)
+		axes.plot(t + ts[0], kpa[0], color=COLOR_START, marker='o')
+		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
 	def lagrangian(self, f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e-3, beta=1e-3, **kwargs):
-		# no. of design variables
-		N = len(x0)
-
-		# no. of inequality constraints
-		M = len(g(x0))
-
-		# Lagrangian multiplier
-		mu0 = np.zeros(M)
+		N = len(x0) # no. of design variables
+		M = len(g(x0)) # no. of inequality constraints
+		mu0 = np.zeros(M) # Lagrangian multiplier
 		
 		# set initial values
 		k = 0
 		xk = x0
-		muk = mu0 # make it a column vector
+		muk = mu0
 
+		# initial function and constraints values
 		fk = f(xk)
 		gk = g(xk)
 		gradfk = gradf(xk)
@@ -423,10 +264,7 @@ class PathPlanner:
 		# Lk = fk + (muk.reshape((-1,1)).transpose() @ gk.reshape((-1,1))).reshape(fk.shape)
 		dk = gradfk + (jacobgk.reshape((-1,N)).transpose() @ muk.reshape((-1,1))).reshape(gradfk.shape)
 
-		# create additional return values
-		status = CONVERGED
-
-		# search loop
+		# Lagrangian algorithm for constrained optimization
 		while (np.linalg.norm(dk) > epsilon): # stopping criteria 1
 			xk_temp = xk
 			xk = xk - alpha * dk.reshape(xk.shape)
@@ -441,7 +279,6 @@ class PathPlanner:
 
 			k += 1
 			if k == max_num_iter: # stopping criteria 2
-				status = REACHED_MAX_ITER
 				break
 		
 		# solutions to return
@@ -449,7 +286,7 @@ class PathPlanner:
 		fval_opt = fk
 		g_opt = gk
 
-		return x_opt, fval_opt, k, g_opt, status
+		return x_opt, fval_opt, k, g_opt
 
 	def opt_search3(self, f, g, xmin, xmax, dx, **kwargs):
 		[xss1, xss2, xss3] = np.meshgrid(
@@ -478,16 +315,17 @@ class PathPlanner:
 
 if __name__ == '__main__':
 	# parameters for simulation
-	N_SIMULATION = 20 # number of simulation loops
+	N_SIMULATION = 25 # number of simulation loops
 	Ds = 30. # preview distance
 	Dt = 0.8 # stepping time
+	kph = 1/3.6
 
 	# Create road model
 	wx = [0.0, 20.0, 30, 50.0, 150]
 	wy = [0.0, -6.0, 5.0, 6.5, 0.0]
 	hwidth = 6 # half width of road
-	ds = 4 # step size along the center line
-	road = Road(wx, wy, hwidth, ds=4)
+	ds = 2 # step size along the center line
+	road = Road(wx, wy, hwidth, ds)
 
 	# Create path planner
 	vref = 10 # [m/s] vehicle target speed
@@ -502,36 +340,31 @@ if __name__ == '__main__':
 	planner = PathPlanner(road, vref, kj, kt, kd, kv, dmax, vmax, amax, kmax)
 
 	# Open a figure window for animation and plot
-	fig = plt.figure(1, figsize=(6,8))
+	fig = plt.figure(1, figsize=(8,8))
 	plt.gcf().canvas.mpl_connect(
 		'key_release_event',
 		lambda event: [exit(0) if event.key == 'escape' else None])
-		
+	
+	spec = gridspec.GridSpec(ncols=2, nrows=3, width_ratios=[1,1], height_ratios=[2,1,1], wspace=0.2, hspace=0.2)
+
 	axes = []
-	axes.append(fig.add_subplot(521))
-	axes.append(fig.add_subplot(522))
-	axes.append(fig.add_subplot(523))
-	axes.append(fig.add_subplot(524))
-	axes.append(fig.add_subplot(525))
-	axes.append(fig.add_subplot(526))
+	axes.append(plt.subplot2grid((3,2),(0,0),colspan=2))
+	axes.append(plt.subplot2grid((3,2),(1,0)))
+	axes.append(plt.subplot2grid((3,2),(1,1)))
+	axes.append(plt.subplot2grid((3,2),(2,0)))
+	axes.append(plt.subplot2grid((3,2),(2,1)))
+	plt.tight_layout(pad=1.8)
+	axes[0].set_aspect(1)
+	axes[0].set_xlim(-5, 100)
+	axes[0].set_ylim(-15, 15)
+	axes[1].set_title('velocity [m/s]')
+	axes[2].set_title('acceleration [m/s^2]')
+	axes[3].set_title('jerk [m/s^3]')
+	axes[4].set_title('curvature [1/m]')
+	axes[3].set_xlabel('Time [sec]')
+	axes[4].set_xlabel('Time [sec]')
 	for ax in axes:
 		ax.grid(True)
-	axes[0].set_aspect(1)
-	axes[0].set_xlim(-5, 75)
-	axes[0].set_ylim(-15, 15)
-	axes[1].set_ylabel('f')
-	axes[2].set_ylabel('g_1 (dmax)')
-	axes[3].set_ylabel('g_2 (vmax)')
-	axes[4].set_ylabel('g_3 (amax)')
-	axes[5].set_ylabel('g_4 (kmax)')
-	ax2 = fig.add_subplot(527)
-	ax3 = fig.add_subplot(528)
-	ax4 = fig.add_subplot(529)
-	ax5 = fig.add_subplot(5,2,10)
-	ax2.grid(True)
-	ax3.grid(True)
-	ax4.grid(True)
-	ax5.grid(True)
 
 	# draw road
 	planner.road.draw(axes[0], ds=1, dmax=dmax)
@@ -541,7 +374,7 @@ if __name__ == '__main__':
 	sT = s0 + Ds
 
 	# initial current vehicle states
-	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(6,0), acc=Vector2D(0,0))
+	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(20*kph,0), acc=Vector2D(0,0))
 
 	# initial values of design variables
 	T = 3 # travel time
@@ -565,7 +398,7 @@ if __name__ == '__main__':
 		gradg = planner.get_constraint_function_jacobian_numeric
 
 		start_time = time.time()
-		x_opt, fval_opt, k, g_opt, status = planner.lagrangian(f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=50, alpha=1e-4, beta=1e-3, color='blue')
+		x_opt, fval_opt, k, g_opt = planner.lagrangian(f, gradf, g, gradg, x0, epsilon=1e-1, max_num_iter=50, alpha=1e-4, beta=1e-3, color='blue')
 		# x_opt, fval_opt, k = planner.opt_search3(f, g, xmin=[1.5, -2, 6], xmax=[4.5, 2, 12], dx=[1, 0.5, 2])
 		end_time = time.time()
 
@@ -573,11 +406,11 @@ if __name__ == '__main__':
 		print(f'Lagrangian: idx={idx+1}, x_opt={np.round(x_opt,2)}, fval_opt={np.round(fval_opt,2)}, g={np.round(g_opt,2)}, num_iter={k}, time={end_time - start_time:5.2f} sec')
 
 		# draw the optimal path and plot signals
-		planner.draw(axes[0], x_opt)
-		planner.plot_vel(ax2, x_opt)
-		planner.plot_acc(ax3, x_opt)
-		planner.plot_jrk(ax4, x_opt)
-		planner.plot_kpa(ax5, x_opt)
+		planner.draw_path(axes[0], x_opt)
+		planner.plot_vel(axes[1], t, x_opt)
+		planner.plot_acc(axes[2], t, x_opt)
+		planner.plot_jrk(axes[3], t, x_opt)
+		planner.plot_kpa(axes[4], t, x_opt)
 		plt.pause(0.01)
 
 		# use the optimal solution as the next initial value
