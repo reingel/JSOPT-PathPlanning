@@ -1,4 +1,3 @@
-
 import math
 import numpy as np
 import bisect
@@ -42,10 +41,10 @@ class Spline:
 
         """
 
-        if t < self.x[0]:
-            return None
-        elif t > self.x[-1]:
-            return None
+        # if t < self.x[0]:
+        #     return None
+        # elif t > self.x[-1]:
+        #     return None
 
         i = self.__search_index(t)
         dx = t - self.x[i]
@@ -61,10 +60,10 @@ class Spline:
         if t is outside of the input x, return None
         """
 
-        if t < self.x[0]:
-            return None
-        elif t > self.x[-1]:
-            return None
+        # if t < self.x[0]:
+        #     return None
+        # elif t > self.x[-1]:
+        #     return None
 
         i = self.__search_index(t)
         dx = t - self.x[i]
@@ -76,10 +75,10 @@ class Spline:
         Calc second derivative
         """
 
-        if t < self.x[0]:
-            return None
-        elif t > self.x[-1]:
-            return None
+        # if t < self.x[0]:
+        #     return None
+        # elif t > self.x[-1]:
+        #     return None
 
         i = self.__search_index(t)
         dx = t - self.x[i]
@@ -90,7 +89,10 @@ class Spline:
         """
         search data segment index
         """
-        return bisect.bisect(self.x, x) - 1
+        i = bisect.bisect(self.x, x) - 1
+        i = max(i, 0)
+        i = min(i, len(self.x) - 2)
+        return i
 
     def __calc_A(self, h):
         """
@@ -170,22 +172,9 @@ class Spline2D:
         return yaw
 
 
-def calc_spline_course(x, y, ds=0.1):
-    sp = Spline2D(x, y)
-    s = list(np.arange(0, sp.s[-1], ds))
-
-    rx, ry, ryaw, rk = [], [], [], []
-    for i_s in s:
-        ix, iy = sp.calc_position(i_s)
-        rx.append(ix)
-        ry.append(iy)
-        ryaw.append(sp.calc_yaw(i_s))
-        rk.append(sp.calc_curvature(i_s))
-
-    return rx, ry, ryaw, rk, s
 
 
-def main():  # pragma: no cover
+if __name__ == '__main__':
     print("Spline 2D test")
     import matplotlib.pyplot as plt
     x = [-2.5, 0.0, 2.5, 5.0, 7.5, 3.0, -1.0]
@@ -227,7 +216,3 @@ def main():  # pragma: no cover
     plt.ylabel("curvature [1/m]")
 
     plt.show()
-
-
-if __name__ == '__main__':
-    main()
