@@ -1,10 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
+from cubic_spline_planner import Spline2D
 from quintic_polynomials import QuinticPolynomial2D
 from road import Road
 from vector import *
 import time
+import os
+from vehicle_dynamics import do_simulation, State
+
 
 EPS = 1e-3
 COLOR_LINE = '#8080FF'
@@ -17,29 +21,29 @@ def vec_max_zero(x: np.ndarray):
 
 
 class VehicleState:
-    def __init__(self, pos=Vector2D(0,0), vel=Vector2D(0,1), acc=Vector2D(0,0)):
-        self._pos = pos
-        self._vel = vel
-        self._acc = acc
-    
-    @property
-    def pos(self):
-        return self._pos
-    
-    @property
-    def vel(self):
-        return self._vel
-    
-    @property
-    def acc(self):
-        return self._acc
-    
-    @property
-    def yaw(self):
-        return arctan2(self.vel.y, self.vel.x)
-    
-    def __repr__(self) -> str:
-        return f'VehicleState(pos={self.pos}, vel={self.vel}, acc={self.acc})'
+	def __init__(self, pos=Vector2D(0,0), vel=Vector2D(0,1), acc=Vector2D(0,0)):
+		self._pos = pos
+		self._vel = vel
+		self._acc = acc
+	
+	@property
+	def pos(self):
+		return self._pos
+	
+	@property
+	def vel(self):
+		return self._vel
+	
+	@property
+	def acc(self):
+		return self._acc
+	
+	@property
+	def yaw(self):
+		return arctan2(self.vel.y, self.vel.x)
+	
+	def __repr__(self) -> str:
+		return f'VehicleState(pos={self.pos}, vel={self.vel}, acc={self.acc})'
 
 
 class PathPlanner:
@@ -56,6 +60,8 @@ class PathPlanner:
 		self.vmax = vmax
 		self.amax = amax
 		self.kmax = kmax
+
+		self.path_data = []
 	
 	def set_travel_range(self, s0, sT):
 		self.s0 = s0 # current 1d position along road center line
@@ -164,12 +170,12 @@ class PathPlanner:
 		dp = 0.0001
 		dv = 0.0001
 
-		J1u = planner.get_object_function_value(np.array([T + dT, posnT, veltT]))
-		J1d = planner.get_object_function_value(np.array([T - dT, posnT, veltT]))
-		J2u = planner.get_object_function_value(np.array([T, posnT + dp, veltT]))
-		J2d = planner.get_object_function_value(np.array([T, posnT - dp, veltT]))
-		J3u = planner.get_object_function_value(np.array([T, posnT, veltT + dv]))
-		J3d = planner.get_object_function_value(np.array([T, posnT, veltT - dv]))
+		J1u = self.get_object_function_value(np.array([T + dT, posnT, veltT]))
+		J1d = self.get_object_function_value(np.array([T - dT, posnT, veltT]))
+		J2u = self.get_object_function_value(np.array([T, posnT + dp, veltT]))
+		J2d = self.get_object_function_value(np.array([T, posnT - dp, veltT]))
+		J3u = self.get_object_function_value(np.array([T, posnT, veltT + dv]))
+		J3d = self.get_object_function_value(np.array([T, posnT, veltT - dv]))
 		
 		dJ_numeric = np.array([(J1u-J1d)/(2*dT), (J2u-J2d)/(2*dp), (J3u-J3d)/(2*dv)])
 
@@ -335,14 +341,46 @@ class PathPlanner:
 						x_opt = x
 
 		return x_opt, fval_opt, k
-	
 
-if __name__ == '__main__':
+	def append_path(self, pos, kpa, vel):
+		yaw = arctan2(vel.y, vel.x)
+		data = Vector([pos.x, pos.y, yaw, kpa, vel.norm])
+		self.path_data.append(data)
+	
+	def save_path(self, filename):
+		data = Matrix(self.path_data)
+		posx = data[:,0]
+		posy = data[:,1]
+		vela = data[:,4]
+
+		course = Road(posx, posy, 6, 1)
+		pos = course.center_points
+		yaw = course.yaws
+		kpa = course.curvatures
+		vel = np.interp(pos[:,0], posx, vela)
+		save_data = np.vstack([pos[:,0], pos[:,1], yaw, kpa, vel]).transpose()
+
+		filepath = os.path.join('./paths', filename)
+		np.savetxt(filepath, save_data)
+	
+def load_path():
+	data = np.loadtxt('./paths/s_curve.dat')
+	posx = data[:,0]
+	posy = data[:,1]
+	yaw = data[:,2]
+	kpa = data[:,3]
+	vel = data[:,4]
+	return posx, posy, yaw, kpa, vel
+
+init_vehicle_state = State()
+
+def gradient_mpc(axes):
 	# parameters for simulation
 	N_SIMULATION = 25 # number of simulation loops
 	Ds = 30. # preview distance
 	Dt = 0.8 # stepping time
 	kph = 1/3.6
+	vel0 = 20*kph
 
 	# Create road model
 	wx = [0.0, 20.0, 30, 50.0, 150]
@@ -363,33 +401,6 @@ if __name__ == '__main__':
 	kmax = 3 # [1/m] max. curvature of path
 	planner = PathPlanner(road, vref, kj, kt, kd, kv, dmax, vmax, amax, kmax)
 
-	# Open a figure window for animation and plot
-	fig = plt.figure(1, figsize=(8,8))
-	plt.gcf().canvas.mpl_connect(
-		'key_release_event',
-		lambda event: [exit(0) if event.key == 'escape' else None])
-	
-	spec = gridspec.GridSpec(ncols=2, nrows=3, width_ratios=[1,1], height_ratios=[2,1,1], wspace=0.2, hspace=0.2)
-
-	axes = []
-	axes.append(plt.subplot2grid((3,2),(0,0),colspan=2))
-	axes.append(plt.subplot2grid((3,2),(1,0)))
-	axes.append(plt.subplot2grid((3,2),(1,1)))
-	axes.append(plt.subplot2grid((3,2),(2,0)))
-	axes.append(plt.subplot2grid((3,2),(2,1)))
-	plt.tight_layout(pad=1.8)
-	axes[0].set_aspect(1)
-	axes[0].set_xlim(-5, 100)
-	axes[0].set_ylim(-15, 15)
-	axes[1].set_title('velocity [m/s]')
-	axes[2].set_title('acceleration [m/s^2]')
-	axes[3].set_title('jerk [m/s^3]')
-	axes[4].set_title('curvature [1/m]')
-	axes[3].set_xlabel('Time [sec]')
-	axes[4].set_xlabel('Time [sec]')
-	for ax in axes:
-		ax.grid(True)
-
 	# draw road
 	planner.road.draw(axes[0], ds=1, dmax=dmax)
 
@@ -398,7 +409,7 @@ if __name__ == '__main__':
 	sT = s0 + Ds
 
 	# initial current vehicle states
-	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(20*kph,0), acc=Vector2D(0,0))
+	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(vel0,0), acc=Vector2D(0,0))
 
 	# initial values of design variables
 	T = 3 # travel time
@@ -450,8 +461,64 @@ if __name__ == '__main__':
 		next_tn_pos = planner.road.convert_xy2tn(s0, next_xy_pos - pos0)
 		next_tn_vel = planner.road.convert_xy2tn(s0, next_xy_vel)
 		next_tn_acc = planner.road.convert_xy2tn(s0, next_xy_acc)
+		next_kpa = (next_xy_vel.x * next_xy_acc.y - next_xy_vel.y * next_xy_acc.x) / ((next_xy_vel.y**2 + next_xy_vel.x**2)**(3/2) + 1e-6)
 		current_state = VehicleState(next_tn_pos, next_tn_vel, next_tn_acc)
 		planner.set_travel_range(s0, sT)
 		planner.set_current_state(current_state)
+
+		# store the optimal path data for simulation
+		planner.append_path(next_xy_pos, next_kpa, next_xy_vel)
+
+	planner.save_path('s_curve.dat')
+
+	s0 = 0.
+	sT = s0 + Ds
+	planner.set_travel_range(s0, sT)
+
+	current_state = VehicleState(pos=Vector2D(0,0), vel=Vector2D(20*kph,0), acc=Vector2D(0,0))
+	planner.set_current_state(current_state)
+	x = planner.current_state.pos.x
+	y = planner.current_state.pos.y
+	yaw = planner.current_state.yaw
+	v = vel0
+
+	init_vehicle_state = State(x, y, yaw, v)
+
+def simulate(axes, state):
+	cx, cy, cyaw, ck, sp = load_path()
+	goal = [cx[-1], cy[-1]]
+	do_simulation(axes[0], state, cx, cy, cyaw, ck, sp, goal)
+
+
+
+
+if __name__ == '__main__':
+	# Open a figure for animation and plot
+	fig = plt.figure(1, figsize=(8,8))
+	spec = gridspec.GridSpec(ncols=2, nrows=3, width_ratios=[1,1], height_ratios=[2,1,1], wspace=0.2, hspace=0.2)
+	axes = []
+	axes.append(plt.subplot2grid((3,2),(0,0),colspan=2))
+	axes.append(plt.subplot2grid((3,2),(1,0)))
+	axes.append(plt.subplot2grid((3,2),(1,1)))
+	axes.append(plt.subplot2grid((3,2),(2,0)))
+	axes.append(plt.subplot2grid((3,2),(2,1)))
+	plt.tight_layout(pad=1.8)
+	axes[0].set_aspect(1)
+	axes[0].set_xlim(-5, 100)
+	axes[0].set_ylim(-15, 15)
+	axes[0].set_title('Press "A" to start and "R" to simulate.')
+	axes[1].set_title('velocity [m/s]')
+	axes[2].set_title('acceleration [m/s^2]')
+	axes[3].set_title('jerk [m/s^3]')
+	axes[4].set_title('curvature [1/m]')
+	axes[3].set_xlabel('Time [sec]')
+	axes[4].set_xlabel('Time [sec]')
+	for ax in axes:
+		ax.grid(True)
+
+	# register keyboard press event handlers
+	plt.gcf().canvas.mpl_connect('key_release_event', lambda event: [exit(0) if event.key == 'escape' else None])
+	plt.gcf().canvas.mpl_connect('key_release_event', lambda event: [gradient_mpc(axes) if event.key == 'a' else None])
+	plt.gcf().canvas.mpl_connect('key_release_event', lambda event: [simulate(axes, init_vehicle_state) if event.key == 'r' else None])
 
 	plt.show()
