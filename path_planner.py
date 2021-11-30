@@ -1,7 +1,19 @@
+#
+# JSOPT-PathPlanning: python project for path planning by optimization
+#                     for autonomous vehicles
+#
+# optimization theory class, 2021 fall
+#
+# path_planner.py: python package for path planning
+#
+# Developed and Maintained by Soonkyu Jeong (reingel@o.cnu.ac.kr)
+#  since Nov. 21, 2021
+#
+
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-from cubic_spline_planner import Spline2D
 from quintic_polynomials import QuinticPolynomial2D
 from road import Road
 from vector import *
@@ -17,10 +29,16 @@ COLOR_END = '#008000'
 
 
 def vec_max_zero(x: np.ndarray):
+	"""
+	Implementation of []+ (make vector's elements nonnegative) which is used in Lagrangian algorithm
+	"""
 	return np.array([max(xi, 0) for xi in x])
 
 
 class VehicleState:
+	"""
+	Class for managing vehicle's position, velocity, acceleration states
+	"""
 	def __init__(self, pos=Vector2D(0,0), vel=Vector2D(0,1), acc=Vector2D(0,0)):
 		self._pos = pos
 		self._vel = vel
@@ -47,6 +65,9 @@ class VehicleState:
 
 
 class PathPlanner:
+	"""
+	Class for path planning: the main class for this project
+	"""
 	def __init__(self, road: Road, ref_vel, kj, kt, kd, kv, dmax, vmax, amax, kmax):
 		self.road = road
 
@@ -67,7 +88,8 @@ class PathPlanner:
 		self.s0 = s0 # current 1d position along road center line
 		self.sT = sT # final   1d position along road center line
 
-	def set_current_state(self, current_state: VehicleState): # current_state : vehicle state in t-n coordinates at t=0
+	def set_current_state(self, current_state: VehicleState):
+		# current_state : vehicle state in t-n coordinates at t=0
 		pos0 = self.road.get_center_point(self.s0)
 		converted_state = VehicleState(
 			pos = self.road.convert_tn2xy(self.s0, current_state.pos) + pos0,
@@ -76,7 +98,8 @@ class PathPlanner:
 		)
 		self.current_state = converted_state
 	
-	def set_final_state(self, final_state: Vector): # final_state (design variables) : vehicle state in t-n coordinates at t=T
+	def set_final_state(self, final_state: Vector):
+		# final_state (design variables) : vehicle state in t-n coordinates at t=T
 		self.final_time = final_state[0]
 		self.final_lat_pos = final_state[1]
 		self.final_long_vel = final_state[2]
@@ -98,6 +121,9 @@ class PathPlanner:
 		self._generate_path()
 
 	def _generate_path(self):
+		"""
+		Internal member function for generating 2D quintic polynomial to represent paths
+		"""
 		self.quintic_poly2d = QuinticPolynomial2D(
 			T=self.final_time,
 			pos0=self.current_state.pos,
@@ -108,22 +134,22 @@ class PathPlanner:
 			accT=self.final_state.acc,
 		)
 
-	def get_xy_pos(self, t):
+	def get_xy_pos(self, t): # get xy position of the path at t
 		return self.quintic_poly2d.pos(t)
 	
-	def get_xy_vel(self, t):
+	def get_xy_vel(self, t): # get xy velocity of the path at t
 		return self.quintic_poly2d.vel(t)
 	
-	def get_xy_acc(self, t):
+	def get_xy_acc(self, t): # get xy acceleration of the path at t
 		return self.quintic_poly2d.acc(t)
 	
-	def get_xy_jrk(self, t):
+	def get_xy_jrk(self, t): # get xy jerk of the path at t
 		return self.quintic_poly2d.jrk(t)
 	
-	def get_curvature(self, t):
+	def get_curvature(self, t): # get curvature of the path at t
 		return self.quintic_poly2d.kpa(t)
 	
-	def get_object_function_jerk(self):
+	def get_object_function_jerk(self): # calculate object function value J1
 		T = self.final_time
 		ax0, ax1, ax2, ax3, ax4, ax5 = self.quintic_poly2d.x_poly.pos_coef
 		ay0, ay1, ay2, ay3, ay4, ay5 = self.quintic_poly2d.y_poly.pos_coef
@@ -139,19 +165,19 @@ class PathPlanner:
 		)
 		return J1
 	
-	def get_object_function_time(self):
+	def get_object_function_time(self): # calculate object function value J2
 		J2 = self.final_time
 		return J2
 	
-	def get_object_function_final_n_pos(self):
+	def get_object_function_final_n_pos(self): # calculate object function value J3
 		J3 = self.final_lat_pos**2
 		return J3
 	
-	def get_object_function_final_t_vel(self):
+	def get_object_function_final_t_vel(self): # calculate object function value J4
 		J4 = (self.final_long_vel - self.ref_vel)**2
 		return J4
 	
-	def get_object_function_value(self, final_state: Vector):
+	def get_object_function_value(self, final_state: Vector): # calculate object function value f(x) = J + kj*J1 + kt*J2 + kd*J3 + kv*J4
 		self.set_final_state(final_state)
 		J1 = self.get_object_function_jerk()
 		J2 = self.get_object_function_time()
@@ -160,7 +186,7 @@ class PathPlanner:
 		J = self.kj*J1 + self.kt*J2 + self.kd*J3 + self.kv*J4
 		return J
 	
-	def get_object_function_gradient_numeric(self, final_state: Vector):
+	def get_object_function_gradient_numeric(self, final_state: Vector): # calculate the gradient of object function grad_f
 		self.set_final_state(final_state)
 		T = self.final_time
 		posnT = self.final_lat_pos
@@ -181,7 +207,7 @@ class PathPlanner:
 
 		return dJ_numeric
 
-	def get_constraint_function_value(self, t):
+	def get_constraint_function_value(self, t): # calculate constraint function value g(x)
 		pos = self.get_xy_pos(t)
 		vel = self.get_xy_vel(t)
 		acc = self.get_xy_acc(t)
@@ -194,7 +220,7 @@ class PathPlanner:
 		g = np.vstack([g1, g2, g3, g4]).transpose()
 		return g
 	
-	def get_constraint_function_max_value(self, final_state: Vector):
+	def get_constraint_function_max_value(self, final_state: Vector): # calculate the maximum value of constraint function for all t
 		self.set_final_state(final_state)
 		nt = 20
 		ts = np.linspace(0, self.final_time, nt)
@@ -203,7 +229,7 @@ class PathPlanner:
 		return max_values
 
 
-	def get_constraint_function_jacobian_numeric(self, final_state: Vector):
+	def get_constraint_function_jacobian_numeric(self, final_state: Vector): # calculate the Jacobian matrix of constraint function Dg(x)
 		self.set_final_state(final_state)
 		T = self.final_time
 		pen = self.final_lat_pos
@@ -223,7 +249,7 @@ class PathPlanner:
 
 		return dg
 	
-	def draw_path(self, axes, final_state, **kwargs):
+	def draw_path(self, axes, final_state, **kwargs): # draw a path
 		self.set_final_state(final_state)
 
 		T, pen, vet = final_state
@@ -241,7 +267,7 @@ class PathPlanner:
 		axes.grid(True)
 		plt.pause(0.01)
 
-	def plot_vel(self, axes, t, final_state):
+	def plot_vel(self, axes, t, final_state): # plot velocity wrt time
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		vel = self.get_xy_vel(ts)
@@ -250,7 +276,7 @@ class PathPlanner:
 		axes.plot(t + ts[0], vel_mag[0], color=COLOR_START, marker='o')
 		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
-	def plot_acc(self, axes, t, final_state):
+	def plot_acc(self, axes, t, final_state): # plot acceleration wrt time
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		acc = self.get_xy_acc(ts)
@@ -259,7 +285,7 @@ class PathPlanner:
 		axes.plot(t + ts[0], acc_mag[0], color=COLOR_START, marker='o')
 		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
-	def plot_jrk(self, axes, t, final_state):
+	def plot_jrk(self, axes, t, final_state): # plot jerk wrt time
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		jrk = self.get_xy_jrk(ts)
@@ -268,7 +294,7 @@ class PathPlanner:
 		axes.plot(t + ts[0], jrk_mag[0], color=COLOR_START, marker='o')
 		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
-	def plot_kpa(self, axes, t, final_state):
+	def plot_kpa(self, axes, t, final_state): # plot curvature wrt time
 		self.set_final_state(final_state)
 		ts = np.linspace(0, self.final_time, 20)
 		kpa = self.get_curvature(ts)
@@ -277,6 +303,9 @@ class PathPlanner:
 		axes.set_xlim([max(t - 15, -5), t + self.final_time])
 		
 	def lagrangian(self, f, gradf, g, gradg, x0, epsilon=1e-6, max_num_iter=1000, alpha=1e-3, beta=1e-3, **kwargs):
+		"""
+		Lagrangian algorithm for optimizing path
+		"""
 		N = len(x0) # no. of design variables
 		M = len(g(x0)) # no. of inequality constraints
 		mu0 = np.zeros(M) # Lagrangian multiplier
@@ -319,6 +348,9 @@ class PathPlanner:
 		return x_opt, fval_opt, k, g_opt
 
 	def opt_search3(self, f, g, xmin, xmax, dx, **kwargs):
+		"""
+		Optimization algorithm of exhaustive search (implemented to compare results with Lagrangian algorithm)
+		"""
 		[xss1, xss2, xss3] = np.meshgrid(
 			np.arange(xmin[0],xmax[0],dx[0]),
 			np.arange(xmin[1],xmax[1],dx[1]),
@@ -342,12 +374,12 @@ class PathPlanner:
 
 		return x_opt, fval_opt, k
 
-	def append_path(self, pos, kpa, vel):
+	def append_path(self, pos, kpa, vel): # store the position, curvature, velocity at Dt for vehicle control
 		yaw = arctan2(vel.y, vel.x)
 		data = Vector([pos.x, pos.y, yaw, kpa, vel.norm])
 		self.path_data.append(data)
 	
-	def save_path(self, filename):
+	def save_path(self, filename): # save the stored position, curvature, velocity data into a file
 		data = Matrix(self.path_data)
 		posx = data[:,0]
 		posy = data[:,1]
@@ -363,7 +395,7 @@ class PathPlanner:
 		filepath = os.path.join('./paths', filename)
 		np.savetxt(filepath, save_data)
 	
-def load_path():
+def load_path(): # load the saved file
 	data = np.loadtxt('./paths/s_curve.dat')
 	posx = data[:,0]
 	posy = data[:,1]
@@ -374,7 +406,7 @@ def load_path():
 
 init_vehicle_state = State()
 
-def gradient_mpc(axes):
+def gradient_mpc(axes): # the function that sequentially optimizes path by gradient method
 	# parameters for simulation
 	N_SIMULATION = 25 # number of simulation loops
 	Ds = 30. # preview distance
@@ -484,7 +516,7 @@ def gradient_mpc(axes):
 
 	init_vehicle_state = State(x, y, yaw, v)
 
-def simulate(axes, state):
+def simulate(axes, state): # the function that simulates vehicle control by LQR algorithm
 	cx, cy, cyaw, ck, sp = load_path()
 	goal = [cx[-1], cy[-1]]
 	do_simulation(axes[0], state, cx, cy, cyaw, ck, sp, goal)

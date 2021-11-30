@@ -1,3 +1,16 @@
+#
+# JSOPT-PathPlanning: python project for path planning by optimization
+#                     for autonomous vehicles
+#
+# optimization theory class, 2021 fall
+#
+# quintic_polynomials.py: python package for path modeling
+#
+# Developed and Maintained by Soonkyu Jeong (reingel@o.cnu.ac.kr)
+#  since Nov. 21, 2021
+#
+
+
 import numpy as np
 import matplotlib.pyplot as plt
 from vector import *

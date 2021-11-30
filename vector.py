@@ -1,3 +1,17 @@
+#
+# JSOPT-PathPlanning: python project for path planning by optimization
+#                     for autonomous vehicles
+#
+# optimization theory class, 2021 fall
+#
+# vector.py: python package for vector calculations
+#
+# Developed and Maintained by Soonkyu Jeong (reingel@o.cnu.ac.kr)
+#  since Nov. 21, 2021
+#
+
+
+
 import numpy as np
 from numpy import sin, cos, arccos, arctan, arctan2, abs, sqrt
 import matplotlib.pyplot as plt
